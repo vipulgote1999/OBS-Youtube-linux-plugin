@@ -76,10 +76,25 @@ cd helper && go test ./... && go vet ./...
 Go 1.22 or newer is required. The helper reads one JSON config object on
 stdin (`{"provider":"auto","video":"...","hl":"en"}`, plus `api_key` when
 the official provider is used) and writes JSON Lines events on stdout; logs
-go to stderr only, and the API key is never logged. In the current
-placeholder state it validates the config, emits
-`{"type":"status","state":"resolving"}`, and then exits 1 with a fatal
-`not_implemented` error — the chat providers land in later tasks.
+go to stderr only, and the API key is never logged or included in error
+text.
+
+The official provider resolves the input with the YouTube Data API
+(`channels.list`, `search.list`, `videos.list`), then streams messages from
+YouTube's `V3DataLiveChatMessageService` gRPC endpoint. It emits
+`connecting`, `connected`, `message`, `reconnecting`, and `ended` events.
+Errors use the codes `auth`, `quota`, `not_live`, `chat_disabled`,
+`network`, `parse`, and `ended`; `fatal` is set when retrying cannot help.
+
+`auto` uses the official provider when an API key is present. The InnerTube
+provider and the keyless `auto` fallback are not implemented yet; selecting
+them exits 1 with a fatal `not_implemented` error.
+
+The protobuf definition and its generated Go bindings live under
+`helper/proto/`. The generated files are committed, so building the helper
+does not need `protoc`. After editing `stream_list.proto`, regenerate them
+with `./scripts/gen-proto.sh`, which requires protoc 27.2 and the pinned
+`protoc-gen-go`/`protoc-gen-go-grpc` versions listed in the script.
 
 ## Layout
 
@@ -90,8 +105,8 @@ src/yt-chat-tts-dock.*  dock widget (placeholder)
 src/version.h           plugin id, dock id, version constants
 data/locale/en-US.ini   module locale strings
 flatpak/                Flatpak manifest and AppStream metainfo
-helper/                 Go chat helper: JSONL protocol, input resolver, entry point
-scripts/                build, smoke-test, espeak-ng, and helper-build scripts
+helper/                 Go chat helper: JSONL protocol, input resolver, official provider, proto bindings
+scripts/                build, smoke-test, espeak-ng, proto-generation, and helper-build scripts
 ```
 
 The bundled espeak-ng runtime lives next to the plugin files inside the

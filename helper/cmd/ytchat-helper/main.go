@@ -3,19 +3,24 @@
 // events only; every log line goes to stderr. The API key arrives on stdin,
 // never on the command line, and is never written to any log or event.
 //
-// Current state: the config is validated and a "resolving" status is
-// emitted, then the helper stops with a fatal not_implemented error. The
-// YouTube chat providers land in later tasks.
+// The official provider resolves the input through the YouTube Data API and
+// streams messages from V3DataLiveChatMessageService over gRPC. The InnerTube
+// provider and the auto fallback land in a later task.
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"obs-youtube-chat-tts/helper/internal/protocol"
+	"obs-youtube-chat-tts/helper/internal/youtube"
 )
 
 // helperVersion is what --version prints.
@@ -55,9 +60,9 @@ func main() {
 }
 
 // run drives the helper and returns the process exit code: 0 when the chat
-// stream ends normally, 1 after a fatal error. Fatal problems are reported
-// on stdout as protocol error events; stdout write failures are logged to
-// stderr.
+// stream ends normally or the process is cancelled, 1 after a fatal error.
+// Fatal problems are reported on stdout as protocol error events; stdout
+// write failures are logged to stderr.
 func run(stdin io.Reader, stdout io.Writer) int {
 	raw, err := io.ReadAll(stdin)
 	if err != nil {
@@ -75,13 +80,86 @@ func run(stdin io.Reader, stdout io.Writer) int {
 			fmt.Sprintf("invalid provider %q (want auto, official, or innertube)", cfg.Provider))
 	}
 
-	// Resolve the video/channel input to a live chat stream. The providers
-	// that do this land in later tasks; stop with a fatal error for now.
-	if err := protocol.WriteEvent(stdout, protocol.Event{Type: "status", State: "resolving"}); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	providerCfg := youtube.Config{
+		Provider: cfg.Provider,
+		APIKey:   cfg.APIKey,
+		Video:    cfg.Video,
+		HL:       cfg.HL,
+	}
+
+	switch cfg.Provider {
+	case "official":
+		return runOfficial(ctx, stdout, providerCfg)
+	case "auto":
+		if cfg.APIKey != "" {
+			return runOfficial(ctx, stdout, providerCfg)
+		}
+		return fatal(stdout, "not_implemented",
+			"the auto provider needs an API key until the InnerTube fallback lands")
+	default: // innertube
+		return fatal(stdout, "not_implemented",
+			"the innertube provider is not implemented yet")
+	}
+}
+
+// runOfficial streams chat through the official provider, reporting connecting
+// before the first request and mapping provider errors to protocol events.
+func runOfficial(ctx context.Context, stdout io.Writer, cfg youtube.Config) int {
+	if err := protocol.WriteEvent(stdout, protocol.Event{
+		Type:   "status",
+		State:  "connecting",
+		Detail: "official",
+	}); err != nil {
 		log.Printf("error: failed to write status event: %v", err)
 		return 1
 	}
-	return fatal(stdout, "not_implemented", "providers not implemented")
+
+	emit := func(e protocol.Event) {
+		if err := protocol.WriteEvent(stdout, e); err != nil {
+			log.Printf("error: failed to write protocol event: %v", err)
+		}
+	}
+
+	provider := &youtube.OfficialProvider{}
+	err := provider.Run(ctx, cfg, emit)
+	if err == nil {
+		return 0
+	}
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+		return 0
+	}
+	return providerError(stdout, err)
+}
+
+// providerError writes one error event for a provider failure and returns the
+// process exit code: 1 for fatal failures, 0 for retryable ones.
+func providerError(w io.Writer, err error) int {
+	code := youtube.CodeNetwork
+	detail := "YouTube chat provider failed"
+	fatalErr := true
+
+	var yerr *youtube.Error
+	if errors.As(err, &yerr) {
+		code = yerr.Code
+		detail = yerr.Message
+		fatalErr = yerr.Fatal
+	}
+
+	if writeErr := protocol.WriteEvent(w, protocol.Event{
+		Type:   "error",
+		Code:   code,
+		Detail: detail,
+		Fatal:  fatalErr,
+	}); writeErr != nil {
+		log.Printf("error: failed to write error event: %v", writeErr)
+	}
+	if fatalErr {
+		return 1
+	}
+	return 0
 }
 
 // fatal writes a fatal error event on w and returns exit code 1.

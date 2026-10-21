@@ -1,7 +1,9 @@
 // Package youtube resolves user input — video URLs, bare video IDs, channel
-// URLs — into the video or channel reference the chat providers consume. It
-// performs no network access and does not decide whether a video is live,
-// past, or upcoming; that is the provider's job.
+// URLs — into the video or channel reference the chat providers consume, and
+// streams live chat through YouTube's official Data API and gRPC service.
+//
+// ParseInput performs no network access and does not decide whether a video
+// is live, past, or upcoming; that is the provider's job.
 package youtube
 
 import (
