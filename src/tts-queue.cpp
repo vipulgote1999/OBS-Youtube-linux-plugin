@@ -13,17 +13,21 @@ void TtsQueue::setLimit(int limit)
 
     std::lock_guard<std::mutex> lock(mutex_);
     limit_ = clamped;
+    while (items_.size() > limit_)
+        evictLowest();
+}
 
-    const auto lowerPriority = [](const Item &lhs, const Item &rhs) {
-        if (lhs.priority != rhs.priority)
-            return lhs.priority < rhs.priority;
-        return lhs.seq < rhs.seq;
-    };
+bool TtsQueue::lowerPriority(const Item &lhs, const Item &rhs)
+{
+    if (lhs.priority != rhs.priority)
+        return lhs.priority < rhs.priority;
+    return lhs.seq < rhs.seq;
+}
 
-    while (items_.size() > limit_) {
-        auto victim = std::min_element(items_.begin(), items_.end(), lowerPriority);
-        items_.erase(victim);
-    }
+void TtsQueue::evictLowest()
+{
+    const auto victim = std::min_element(items_.begin(), items_.end(), lowerPriority);
+    items_.erase(victim);
 }
 
 void TtsQueue::push(const ChatMessage &msg, int priority)
@@ -39,15 +43,8 @@ void TtsQueue::push(const ChatMessage &msg, int priority)
             return;
     }
 
-    while (items_.size() >= limit_) {
-        auto victim = std::min_element(items_.begin(), items_.end(),
-                                       [](const Item &lhs, const Item &rhs) {
-                                           if (lhs.priority != rhs.priority)
-                                               return lhs.priority < rhs.priority;
-                                           return lhs.seq < rhs.seq;
-                                       });
-        items_.erase(victim);
-    }
+    while (items_.size() >= limit_)
+        evictLowest();
 
     Item item;
     item.msg = msg;

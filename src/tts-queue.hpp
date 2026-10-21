@@ -34,6 +34,11 @@ private:
         uint64_t seq = 0;
     };
 
+    /* Lock held by the caller; removes the lowest-priority, then oldest,
+     * queued item. */
+    void evictLowest();
+    static bool lowerPriority(const Item &lhs, const Item &rhs);
+
     mutable std::mutex mutex_;
     std::condition_variable cv_;
     std::deque<Item> items_;
