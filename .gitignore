@@ -1,0 +1,13 @@
+# Build output
+build/
+build-flatpak/
+dist/
+
+# flatpak-builder working directory
+.flatpak-builder/
+
+# Qt Creator / VS Code user files
+*.user
+
+# Agent planning scratch space (not part of the product)
+.superpowers/

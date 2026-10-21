@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="addon">
+  <id>com.obsproject.Studio.Plugin.YtChatTts</id>
+  <extends>com.obsproject.Studio</extends>
+  <name>YouTube Chat TTS</name>
+  <summary>Reads YouTube live chat aloud and mixes the speech into OBS</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-2.0-or-later</project_license>
+  <description>
+    <p>
+      YouTube Chat TTS adds a dock to OBS Studio that reads YouTube live chat messages
+      aloud using the bundled espeak-ng offline speech engine and feeds the synthesized
+      speech into OBS as a native audio source, so streams and recordings carry spoken
+      chat like any other audio.
+    </p>
+    <p>
+      This release is the initial Flatpak extension skeleton: the module installs into
+      OBS Studio and shows the placeholder YouTube Chat TTS dock.
+    </p>
+  </description>
+  <releases>
+    <release version="0.1.0" date="2026-10-21">
+      <description>
+        <p>Initial extension skeleton with the YouTube Chat TTS dock.</p>
+      </description>
+    </release>
+  </releases>
+  <content_rating type="oars-1.1" />
+</component>
