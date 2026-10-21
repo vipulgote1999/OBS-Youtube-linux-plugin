@@ -257,4 +257,20 @@ if(BUILD_TESTING)
 
     add_test(NAME test_tts_worker COMMAND test_tts_worker)
     set_tests_properties(test_tts_worker PROPERTIES TIMEOUT 30)
+
+    # Engine-level Piper coverage through the injectable PiperApi.  The real
+    # libpiper/ONNX backend is added to the plugin target in a later task, so
+    # this host test has no native runtime dependency.
+    add_executable(test_piper_engine
+        tests/test_piper_engine.cpp
+        src/piper-engine.cpp
+    )
+
+    target_include_directories(test_piper_engine PRIVATE src)
+    target_link_libraries(test_piper_engine PRIVATE
+        Qt6::Core
+        Qt6::Test
+    )
+
+    add_test(NAME test_piper_engine COMMAND test_piper_engine)
 endif()
