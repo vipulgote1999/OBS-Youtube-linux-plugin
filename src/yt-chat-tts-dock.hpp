@@ -37,8 +37,10 @@ public:
 private:
     void onConnectClicked();
     void onSaveClicked();
+    void onAddSourceClicked(bool allScenes);
     void onEvent(const ChatEvent &event);
     void setConnected(bool connected);
+    void updateSourceStatus();
     void appendLog(const QString &line);
 
     Settings settingsFromControls() const;
@@ -74,6 +76,9 @@ private:
     QCheckBox *readModeratorsCheck_ = nullptr;
     QPushButton *connectButton_ = nullptr;
     QPushButton *saveButton_ = nullptr;
+    QPushButton *addSourceButton_ = nullptr;
+    QPushButton *addSourceAllButton_ = nullptr;
     QLabel *statusLabel_ = nullptr;
+    QLabel *sourceStatusLabel_ = nullptr;
     QPlainTextEdit *logView_ = nullptr;
 };

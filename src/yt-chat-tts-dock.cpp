@@ -1,5 +1,6 @@
 #include "yt-chat-tts-dock.hpp"
 
+#include "audio-source.hpp"
 #include "chat-client.hpp"
 #include "paths.hpp"
 
@@ -80,6 +81,22 @@ YtChatTtsDock::YtChatTtsDock(QWidget *parent)
     maxCharsSpin_->setSuffix(QStringLiteral(" chars"));
     voiceForm->addRow(QStringLiteral("Max length"), maxCharsSpin_);
     settingsLayout->addWidget(voiceGroup);
+
+    auto *audioGroup = new QGroupBox(QStringLiteral("Audio output"), settingsWidget);
+    auto *audioLayout = new QVBoxLayout(audioGroup);
+
+    addSourceButton_ = new QPushButton(QStringLiteral("Add TTS source to current scene"), audioGroup);
+    addSourceAllButton_ = new QPushButton(QStringLiteral("Add to all scenes"), audioGroup);
+    auto *audioButtonRow = new QHBoxLayout;
+    audioButtonRow->addWidget(addSourceButton_);
+    audioButtonRow->addWidget(addSourceAllButton_);
+    audioButtonRow->addStretch(1);
+    audioLayout->addLayout(audioButtonRow);
+
+    sourceStatusLabel_ = new QLabel(audioGroup);
+    sourceStatusLabel_->setWordWrap(true);
+    audioLayout->addWidget(sourceStatusLabel_);
+    settingsLayout->addWidget(audioGroup);
 
     auto *filterGroup = new QGroupBox(QStringLiteral("Filtering"), settingsWidget);
     auto *filterForm = new QFormLayout(filterGroup);
@@ -163,9 +180,14 @@ YtChatTtsDock::YtChatTtsDock(QWidget *parent)
     layout->addWidget(logView_, 1);
 
     applySettingsToControls();
+    updateSourceStatus();
 
     connect(connectButton_, &QPushButton::clicked, this, &YtChatTtsDock::onConnectClicked);
     connect(saveButton_, &QPushButton::clicked, this, &YtChatTtsDock::onSaveClicked);
+    connect(addSourceButton_, &QPushButton::clicked, this,
+            [this]() { onAddSourceClicked(false); });
+    connect(addSourceAllButton_, &QPushButton::clicked, this,
+            [this]() { onAddSourceClicked(true); });
     connect(client_, &ChatClient::eventReceived, this, &YtChatTtsDock::onEvent);
 
     connect(urlEdit_, &QLineEdit::textChanged, this, &YtChatTtsDock::scheduleSave);
@@ -279,6 +301,40 @@ void YtChatTtsDock::onSaveClicked()
     appendLog(QStringLiteral("settings saved"));
 }
 
+void YtChatTtsDock::onAddSourceClicked(bool allScenes)
+{
+    if (audio_source_exists()) {
+        const QString message = QStringLiteral("TTS source already exists; not adding another");
+        appendLog(QStringLiteral("audio: ") + message);
+        statusLabel_->setText(message);
+        updateSourceStatus();
+        return;
+    }
+
+    create_audio_source(allScenes);
+
+    if (audio_source_exists()) {
+        const QString message = allScenes ? QStringLiteral("TTS source added to all scenes")
+                                          : QStringLiteral("TTS source added to the current scene");
+        appendLog(QStringLiteral("audio: ") + message);
+        statusLabel_->setText(message);
+    } else {
+        const QString message =
+            QStringLiteral("Could not add the TTS source; open a scene and try again");
+        appendLog(QStringLiteral("audio: ") + message);
+        statusLabel_->setText(message);
+    }
+
+    updateSourceStatus();
+}
+
+void YtChatTtsDock::updateSourceStatus()
+{
+    sourceStatusLabel_->setText(audio_source_exists()
+                                    ? QStringLiteral("TTS source: added")
+                                    : QStringLiteral("TTS source: not added (audio will be silent)"));
+}
+
 void YtChatTtsDock::onConnectClicked()
 {
     if (client_->isRunning()) {
@@ -315,6 +371,12 @@ void YtChatTtsDock::onConnectClicked()
 
     setConnected(true);
     statusLabel_->setText(QStringLiteral("Connecting…"));
+
+    if (!audio_source_exists()) {
+        appendLog(QStringLiteral(
+            "warning: no TTS audio source added; chat is read but audio will be silent"));
+        updateSourceStatus();
+    }
 }
 
 void YtChatTtsDock::onEvent(const ChatEvent &event)

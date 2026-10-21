@@ -21,6 +21,9 @@ add_library(yt-chat-tts MODULE
     src/tts-queue.cpp
     src/wav.cpp
     src/espeak-engine.cpp
+    src/audio-buffer.cpp
+    src/audio-bus.cpp
+    src/audio-source.cpp
 )
 
 # libobs (and OBS Flatpak plugin extensions) load modules as <name>.so on
@@ -167,4 +170,17 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME test_espeak_engine COMMAND test_espeak_engine)
+
+    add_executable(test_audio_buffer
+        tests/test_audio_buffer.cpp
+        src/audio-buffer.cpp
+    )
+
+    target_include_directories(test_audio_buffer PRIVATE src)
+    target_link_libraries(test_audio_buffer PRIVATE
+        Qt6::Core
+        Qt6::Test
+    )
+
+    add_test(NAME test_audio_buffer COMMAND test_audio_buffer)
 endif()

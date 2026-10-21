@@ -5,6 +5,8 @@
 #include "version.h"
 #include "yt-chat-tts-dock.hpp"
 
+#include "audio-source.hpp"
+
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
@@ -19,6 +21,8 @@ static YtChatTtsDock *unregisteredDock = nullptr;
 bool obs_module_load(void)
 {
     blog(LOG_INFO, "[%s] loaded (version %s)", PLUGIN_NAME, PLUGIN_VERSION);
+
+    register_audio_source();
 
     QWidget *mainWindow = static_cast<QWidget *>(obs_frontend_get_main_window());
     auto *dockWidget = new YtChatTtsDock(mainWindow);
