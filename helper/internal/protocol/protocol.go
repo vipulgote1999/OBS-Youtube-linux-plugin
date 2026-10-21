@@ -14,9 +14,9 @@ import (
 type Event struct {
 	Type    string       `json:"type"`              // status | message | error
 	State   string       `json:"state,omitempty"`   // resolving|connecting|connected|reconnecting|ended
-	Detail  string       `json:"detail,omitempty"`  // status/error text; never a secret
-	Message *ChatMessage `json:"message,omitempty"` // only for type=message
 	Code    string       `json:"code,omitempty"`    // only for type=error
+	Message *ChatMessage `json:"message,omitempty"` // only for type=message
+	Detail  string       `json:"detail,omitempty"`  // status/error text; never a secret
 	Fatal   bool         `json:"fatal,omitempty"`   // only for type=error
 }
 

@@ -108,6 +108,21 @@ func TestWriteEvent(t *testing.T) {
 	}
 }
 
+// TestWriteEventErrorEventExactBytes pins the error-event wire format to the
+// exact bytes the spec mandates, including key order: type, code, detail,
+// fatal, terminated by a single newline.
+func TestWriteEventErrorEventExactBytes(t *testing.T) {
+	var buf bytes.Buffer
+	event := Event{Type: "error", Code: "quota", Detail: "quota exceeded", Fatal: true}
+	if err := WriteEvent(&buf, event); err != nil {
+		t.Fatalf("WriteEvent() error = %v", err)
+	}
+	want := `{"type":"error","code":"quota","detail":"quota exceeded","fatal":true}` + "\n"
+	if got := buf.String(); got != want {
+		t.Errorf("error event wire bytes =\n%q\nwant\n%q", got, want)
+	}
+}
+
 // TestWriteEventConcurrentLines verifies the write lock: concurrent writers
 // sharing one stream must never interleave partial lines.
 func TestWriteEventConcurrentLines(t *testing.T) {
