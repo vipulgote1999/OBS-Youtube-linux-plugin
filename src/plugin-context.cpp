@@ -262,7 +262,9 @@ bool PluginContext::ensureWorker(QString *error)
         const QString voice = piperVoiceOrDefault(settings_);
         auto api = std::make_unique<LibPiperApi>(piper.modelPath, piper.configPath,
                                                  piper.espeakDataPath);
-        installWorker(std::make_unique<PiperEngine>(std::move(api), settings_.rate));
+        auto piperEngine = std::make_unique<PiperEngine>(std::move(api), settings_.rate);
+        piperEngine->setSpeed(static_cast<float>(settings_.piperSpeed));
+        installWorker(std::move(piperEngine));
 
         // Report the engine this context actually created, after every check.
         // Construction is lazy: a corrupt model is detected on the worker's
@@ -312,6 +314,7 @@ bool PluginContext::ensureWorker(QString *error)
     enginePiperVoice_ = settings_.piperVoice;
     enginePiperModelPath_ = settings_.piperModelPath;
     enginePiperConfigPath_ = settings_.piperConfigPath;
+    enginePiperSpeed_ = settings_.piperSpeed;
     engineVoice_ = settings_.voice;
     engineRate_ = settings_.rate;
     enginePitch_ = settings_.pitch;
@@ -378,6 +381,7 @@ bool PluginContext::engineSettingsDiffer() const
                        settings_.piperVoice != enginePiperVoice_ ||
                        settings_.piperModelPath != enginePiperModelPath_ ||
                        settings_.piperConfigPath != enginePiperConfigPath_ ||
+                       settings_.piperSpeed != enginePiperSpeed_ ||
                        settings_.voice != engineVoice_ || settings_.rate != engineRate_ ||
                        settings_.pitch != enginePitch_ ||
                        settings_.amplitude != engineAmplitude_);

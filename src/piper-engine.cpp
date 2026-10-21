@@ -36,7 +36,9 @@ bool PiperEngine::synthesize(const QString &text, std::vector<float> *pcm, int *
     if (!api_)
         return fail(error, QStringLiteral("piper backend is not available"));
 
-    const float lengthScale = qBound(kMinLengthScale, kBaseRate / float(rate_), kMaxLengthScale);
+    const float lengthScale = speed_ > 0.0f
+                                  ? qBound(kMinLengthScale, speed_, kMaxLengthScale)
+                                  : qBound(kMinLengthScale, kBaseRate / float(rate_), kMaxLengthScale);
     if (!api_->synthesize(text, lengthScale, pcm, sampleRate, error)) {
         if (error && error->isEmpty())
             *error = QStringLiteral("piper synthesis failed");
@@ -65,6 +67,11 @@ void PiperEngine::resetCancel()
 {
     if (api_)
         api_->resetCancel();
+}
+
+void PiperEngine::setSpeed(float speed)
+{
+    speed_ = speed;
 }
 
 bool PiperEngine::initializationFailed() const

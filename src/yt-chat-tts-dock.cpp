@@ -233,7 +233,18 @@ YtChatTtsDock::YtChatTtsDock(PluginContext *context, QWidget *parent)
     rateSlider_ = new QSlider(Qt::Horizontal, voiceGroup);
     rateSlider_->setRange(80, 450);
     rateValueLabel_ = new QLabel(voiceGroup);
-    addSliderRow(voiceForm, uiText("Voice.Rate", "Rate"), rateSlider_, rateValueLabel_);
+    rateRow_ = addSliderRow(voiceForm, uiText("Voice.Rate", "Rate"), rateSlider_, rateValueLabel_);
+
+    piperSpeedSlider_ = new QSlider(Qt::Horizontal, voiceGroup);
+    piperSpeedSlider_->setRange(50, 200);
+    piperSpeedSlider_->setSingleStep(5);
+    speedValueLabel_ = new QLabel(voiceGroup);
+    speedRow_ = addSliderRow(voiceForm, uiText("Voice.Speed", "Speed"), piperSpeedSlider_,
+                             speedValueLabel_);
+
+    advancedVoiceCheck_ =
+        new QCheckBox(uiText("Voice.ShowAdvanced", "Show advanced voice settings"), voiceGroup);
+    voiceForm->addRow(advancedVoiceCheck_);
 
     pitchSlider_ = new QSlider(Qt::Horizontal, voiceGroup);
     pitchSlider_->setRange(0, 200);
@@ -479,6 +490,10 @@ YtChatTtsDock::YtChatTtsDock(PluginContext *context, QWidget *parent)
     connect(voiceCombo_, &QComboBox::currentTextChanged, this,
             &YtChatTtsDock::onControlChanged);
     connect(rateSlider_, &QSlider::valueChanged, this, &YtChatTtsDock::onControlChanged);
+    connect(piperSpeedSlider_, &QSlider::valueChanged, this,
+            &YtChatTtsDock::onControlChanged);
+    connect(advancedVoiceCheck_, &QCheckBox::toggled, this,
+            &YtChatTtsDock::updateEngineControls);
     connect(pitchSlider_, &QSlider::valueChanged, this, &YtChatTtsDock::onControlChanged);
     connect(amplitudeSlider_, &QSlider::valueChanged, this,
             &YtChatTtsDock::onControlChanged);
@@ -556,6 +571,7 @@ void YtChatTtsDock::applySettingsToControls()
 
     voiceCombo_->setCurrentText(settings.voice);
     rateSlider_->setValue(settings.rate);
+    piperSpeedSlider_->setValue(qRound(settings.piperSpeed * 100.0));
     pitchSlider_->setValue(settings.pitch);
     amplitudeSlider_->setValue(settings.amplitude);
     volumeSlider_->setValue(qRound(settings.volume * 100.0));
@@ -594,6 +610,7 @@ Settings YtChatTtsDock::settingsFromControls() const
     if (settings.piperVoice.isEmpty())
         settings.piperVoice = QStringLiteral("en_US-ljspeech-medium");
     settings.rate = rateSlider_->value();
+    settings.piperSpeed = piperSpeedSlider_->value() / 100.0;
     settings.pitch = pitchSlider_->value();
     settings.amplitude = amplitudeSlider_->value();
     settings.volume = volumeSlider_->value() / 100.0;
@@ -642,6 +659,7 @@ void YtChatTtsDock::onControlChanged()
     QObject *changed = sender();
     const bool engineSelection = changed == engineCombo_ || changed == piperVoiceCombo_;
     const bool engineControl = changed == voiceCombo_ || changed == rateSlider_ ||
+                               changed == piperSpeedSlider_ ||
                                changed == pitchSlider_ || changed == amplitudeSlider_ ||
                                engineSelection;
     if (engineSelection) {
@@ -812,15 +830,10 @@ void YtChatTtsDock::updateSourceStatus()
 
 void YtChatTtsDock::updateValueLabels()
 {
-    const bool piper = engineCombo_->currentData().toString() != QLatin1String("espeak");
-    if (piper) {
-        const double lengthScale = 165.0 / qMax(1, rateSlider_->value());
-        rateValueLabel_->setText(
-            uiTextf("Voice.PiperRateValue", "%1×", QString::number(lengthScale, 'f', 2)));
-    } else {
-        rateValueLabel_->setText(
-            uiTextf("Voice.RateValue", "%1 wpm", QString::number(rateSlider_->value())));
-    }
+    rateValueLabel_->setText(
+        uiTextf("Voice.RateValue", "%1 wpm", QString::number(rateSlider_->value())));
+    speedValueLabel_->setText(uiTextf("Voice.SpeedValue", "%1×",
+                                      QString::number(piperSpeedSlider_->value() / 100.0, 'f', 2)));
     pitchValueLabel_->setText(QString::number(pitchSlider_->value()));
     amplitudeValueLabel_->setText(QString::number(amplitudeSlider_->value()));
     volumeValueLabel_->setText(
@@ -836,6 +849,11 @@ void YtChatTtsDock::updateEngineControls()
     piperVoiceCombo_->setEnabled(piper);
     voiceCombo_->setEnabled(!piper);
 
+    if (rateRow_)
+        rateRow_->setVisible(!piper);
+    if (speedRow_)
+        speedRow_->setVisible(piper);
+
     /* Piper has no pitch/amplitude knobs; its voice model fixes them. */
     const QString tooltip =
         piper ? uiText("Voice.PiperFixedTooltip",
@@ -845,16 +863,18 @@ void YtChatTtsDock::updateEngineControls()
     amplitudeSlider_->setEnabled(!piper);
     pitchSlider_->setToolTip(tooltip);
     amplitudeSlider_->setToolTip(tooltip);
+    const bool showAdvanced = advancedVoiceCheck_ && advancedVoiceCheck_->isChecked();
     if (pitchRow_)
-        pitchRow_->setVisible(!piper);
+        pitchRow_->setVisible(!piper && showAdvanced);
     if (amplitudeRow_)
-        amplitudeRow_->setVisible(!piper);
+        amplitudeRow_->setVisible(!piper && showAdvanced);
     updateValueLabels();
 }
 
 void YtChatTtsDock::onResetVoiceClicked()
 {
     rateSlider_->setValue(165);
+    piperSpeedSlider_->setValue(85);
     pitchSlider_->setValue(50);
     amplitudeSlider_->setValue(150);
     volumeSlider_->setValue(100);

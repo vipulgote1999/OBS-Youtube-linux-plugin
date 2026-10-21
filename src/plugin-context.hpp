@@ -108,6 +108,7 @@ private:
     QString enginePiperVoice_;
     QString enginePiperModelPath_;
     QString enginePiperConfigPath_;
+    double enginePiperSpeed_ = -1.0;
     QString engineVoice_;
     int engineRate_ = -1;
     int enginePitch_ = -1;

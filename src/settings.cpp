@@ -33,6 +33,7 @@ void clampValues(Settings *settings)
     settings->pitch = qBound(kPitchMin, settings->pitch, kPitchMax);
     settings->amplitude = qBound(kPitchMin, settings->amplitude, kPitchMax);
     settings->volume = qBound(kVolumeMin, settings->volume, kVolumeMax);
+    settings->piperSpeed = qBound(0.5, settings->piperSpeed, 2.0);
     settings->userCooldownSec =
         qBound(kUserCooldownMin, settings->userCooldownSec, kUserCooldownMax);
     settings->globalCooldownSec =
@@ -115,6 +116,7 @@ Settings Settings::fromObsData(obs_data_t *data)
     settings.piperVoice = readString("piperVoice", settings.piperVoice);
     settings.piperModelPath = readString("piperModelPath", settings.piperModelPath);
     settings.piperConfigPath = readString("piperConfigPath", settings.piperConfigPath);
+    settings.piperSpeed = readDouble("piperSpeed", settings.piperSpeed);
     settings.rate = readInt("rate", settings.rate);
     settings.pitch = readInt("pitch", settings.pitch);
     settings.amplitude = readInt("amplitude", settings.amplitude);
@@ -152,6 +154,7 @@ obs_data_t *Settings::toObsData() const
     obs_data_set_string(data, "piperVoice", piperVoice.toUtf8().constData());
     obs_data_set_string(data, "piperModelPath", piperModelPath.toUtf8().constData());
     obs_data_set_string(data, "piperConfigPath", piperConfigPath.toUtf8().constData());
+    obs_data_set_double(data, "piperSpeed", piperSpeed);
     obs_data_set_int(data, "rate", rate);
     obs_data_set_int(data, "pitch", pitch);
     obs_data_set_int(data, "amplitude", amplitude);

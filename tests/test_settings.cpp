@@ -29,6 +29,7 @@ void compareSettings(const Settings &actual, const Settings &expected)
     QCOMPARE(actual.piperVoice, expected.piperVoice);
     QCOMPARE(actual.piperModelPath, expected.piperModelPath);
     QCOMPARE(actual.piperConfigPath, expected.piperConfigPath);
+    QCOMPARE(actual.piperSpeed, expected.piperSpeed);
     QCOMPARE(actual.rate, expected.rate);
     QCOMPARE(actual.pitch, expected.pitch);
     QCOMPARE(actual.amplitude, expected.amplitude);
@@ -63,6 +64,7 @@ Settings changedSettings()
     settings.piperVoice = QStringLiteral("en_US-ryan-high");
     settings.piperModelPath = QStringLiteral("/tmp/piper/ryan.onnx");
     settings.piperConfigPath = QStringLiteral("/tmp/piper/ryan.onnx.json");
+    settings.piperSpeed = 0.75;
     settings.rate = 200;
     settings.pitch = 60;
     settings.amplitude = 120;
@@ -198,6 +200,7 @@ void TestSettings::dockFacingSettingsRoundTripThroughFile()
     original.piperVoice = QStringLiteral("en_US-ryan-high");
     original.piperModelPath = QStringLiteral("/tmp/piper/ryan.onnx");
     original.piperConfigPath = QStringLiteral("/tmp/piper/ryan.onnx.json");
+    original.piperSpeed = 0.8;
     original.rate = 220;
     original.pitch = 70;
     original.amplitude = 180;
@@ -231,6 +234,7 @@ void TestSettings::dockFacingSettingsRoundTripThroughFile()
     QCOMPARE(restored.piperVoice, original.piperVoice);
     QCOMPARE(restored.piperModelPath, original.piperModelPath);
     QCOMPARE(restored.piperConfigPath, original.piperConfigPath);
+    QCOMPARE(restored.piperSpeed, original.piperSpeed);
     QCOMPARE(restored.rate, original.rate);
     QCOMPARE(restored.pitch, original.pitch);
     QCOMPARE(restored.amplitude, original.amplitude);
@@ -273,6 +277,7 @@ void TestSettings::loadsDefaultsForMissingFile()
     QCOMPARE(settings.amplitude, 150);
     QCOMPARE(settings.volume, 1.0);
     QCOMPARE(settings.maxChars, 200);
+    QCOMPARE(settings.piperSpeed, 0.85);
     QCOMPARE(settings.userCooldownSec, 30);
     QCOMPARE(settings.globalCooldownSec, 2);
     QCOMPARE(settings.queueLimit, 25);

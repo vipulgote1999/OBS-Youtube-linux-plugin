@@ -25,6 +25,7 @@ struct Settings {
     QString piperVoice = QStringLiteral("en_US-ljspeech-medium");
     QString piperModelPath;
     QString piperConfigPath;
+    double piperSpeed = 0.85;
     int rate = 165;
     int pitch = 50;
     int amplitude = 150;
