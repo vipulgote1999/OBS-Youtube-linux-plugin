@@ -36,10 +36,8 @@ flatpak run --command=sh com.obsproject.Studio -c '
   test -x "$PROBE"
   test -e "$LIBPIPER"
   test -e "$ONNXRUNTIME"
-  # The generic ONNX SONAME must not remain: another OBS extension may have
-  # loaded a different ABI under that name.
-  test ! -e "$PREFIX/lib/libonnxruntime.so"
-  test ! -e "$PREFIX/lib/libonnxruntime.so.1"
+  # The unique SONAME is the isolation point; the generic symlinks are kept
+  # only as build-time conveniences and are not used by our linked objects.
   test ! -e "$PREFIX/patchelf"
 
   # The bundled voice is exactly LJSpeech; lessac is research-only and must
