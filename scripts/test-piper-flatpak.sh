@@ -3,7 +3,9 @@ set -euo pipefail
 
 # Run the installed Piper probe inside the OBS Flatpak sandbox with the bundled
 # voice and espeak-ng data.  Fails unless libpiper reports 22,050 Hz and a
-# positive sample count.
+# positive sample count.  The probe runs the raw C API path and then the
+# shipped LibPiperApi/PiperEngine backend (two utterances in one process, so
+# the model is created once and reused).
 set +e
 output="$(flatpak run --command=sh com.obsproject.Studio -c '
   set -eu
@@ -19,7 +21,8 @@ output="$(flatpak run --command=sh com.obsproject.Studio -c '
   test -f "$CONFIG"
   test -d "$ESPEAK_DATA"
 
-  "$PROBE" --model "$MODEL" --config "$CONFIG" --espeak-data "$ESPEAK_DATA"
+  "$PROBE" --model "$MODEL" --config "$CONFIG" --espeak-data "$ESPEAK_DATA" --engine c-api
+  "$PROBE" --model "$MODEL" --config "$CONFIG" --espeak-data "$ESPEAK_DATA" --engine backend
 ')"
 status=$?
 set -e
@@ -31,6 +34,7 @@ if [[ ${status} -ne 0 ]]; then
 fi
 
 grep -q 'sample_rate=22050' <<<"${output}"
+grep -q 'synthesis=2 sample_rate=22050' <<<"${output}"
 samples="$(sed -n 's/.*samples=\([0-9][0-9]*\).*/\1/p' <<<"${output}" | tail -n 1)"
 if [[ -z "${samples}" || "${samples}" -le 0 ]]; then
     echo "piper: expected a positive sample count, got '${samples:-none}'" >&2

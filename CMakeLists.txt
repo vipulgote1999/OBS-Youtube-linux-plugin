@@ -10,6 +10,24 @@ find_package(libobs REQUIRED CONFIG)
 find_package(obs-frontend-api REQUIRED CONFIG)
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network)
 
+# Native Piper runtime.  Host builds and host tests deliberately do not need
+# libpiper or ONNX Runtime: the real backend is only compiled into the plugin
+# when PIPER_ROOT (or the normal system paths) provides piper.h and both
+# libraries.  The Flatpak build passes -DPIPER_ROOT=/app/plugins/YtChatTts.
+set(PIPER_ROOT "" CACHE PATH "Prefix containing libpiper and ONNX Runtime")
+
+find_path(PIPER_INCLUDE_DIR NAMES piper.h HINTS "${PIPER_ROOT}/include")
+find_library(PIPER_LIBRARY NAMES piper HINTS "${PIPER_ROOT}/lib")
+find_library(ONNXRUNTIME_LIBRARY NAMES onnxruntime HINTS "${PIPER_ROOT}/lib")
+
+if(PIPER_INCLUDE_DIR AND PIPER_LIBRARY AND ONNXRUNTIME_LIBRARY)
+    set(YTCHAT_PIPER_AVAILABLE ON)
+    message(STATUS "Piper backend: ${PIPER_LIBRARY} (headers: ${PIPER_INCLUDE_DIR})")
+else()
+    set(YTCHAT_PIPER_AVAILABLE OFF)
+    message(STATUS "Piper backend: not found; building without libpiper")
+endif()
+
 add_library(yt-chat-tts MODULE
     src/plugin-main.cpp
     src/yt-chat-tts-dock.cpp
@@ -44,6 +62,27 @@ target_link_libraries(yt-chat-tts PRIVATE
     Qt6::Widgets
     Qt6::Network
 )
+
+# Product code defines HAVE_LIBPIPER=1 when the bundled runtime is linked so
+# the engine wiring can choose Piper; host builds compile without it.
+if(YTCHAT_PIPER_AVAILABLE)
+    target_sources(yt-chat-tts PRIVATE
+        src/piper-engine.cpp
+        src/piper-engine.hpp
+        src/libpiper-api.cpp
+        src/libpiper-api.hpp
+    )
+    target_include_directories(yt-chat-tts PRIVATE "${PIPER_INCLUDE_DIR}")
+    target_compile_definitions(yt-chat-tts PRIVATE HAVE_LIBPIPER=1)
+    target_link_libraries(yt-chat-tts PRIVATE
+        "${PIPER_LIBRARY}"
+        "${ONNXRUNTIME_LIBRARY}"
+    )
+
+    # yt-chat-tts.so is installed in <prefix>/lib/obs-plugins, while libpiper
+    # and libonnxruntime are installed in <prefix>/lib.
+    set_target_properties(yt-chat-tts PROPERTIES INSTALL_RPATH "$ORIGIN/..")
+endif()
 
 install(TARGETS yt-chat-tts
     LIBRARY DESTINATION lib/obs-plugins
@@ -85,16 +124,22 @@ install(DIRECTORY LICENSES/
 # Packaging probe for the Flatpak build.  It is off by default so host builds
 # and host tests do not need libpiper or ONNX Runtime.  The Flatpak manifest
 # enables it once the bundled libraries and voice model have been installed.
+# Besides the raw C API path, the probe can exercise the real LibPiperApi via
+# PiperEngine so the shipped backend is verified, not just libpiper itself.
 option(BUILD_PIPER_PROBE "Build the Flatpak Piper probe" OFF)
 
 if(BUILD_PIPER_PROBE)
-    set(PIPER_ROOT "" CACHE PATH "Prefix containing libpiper and ONNX Runtime")
+    if(NOT YTCHAT_PIPER_AVAILABLE)
+        message(FATAL_ERROR
+            "BUILD_PIPER_PROBE requires libpiper and ONNX Runtime; "
+            "set -DPIPER_ROOT=<prefix>")
+    endif()
 
-    find_path(PIPER_INCLUDE_DIR NAMES piper.h HINTS "${PIPER_ROOT}/include" REQUIRED)
-    find_library(PIPER_LIBRARY NAMES piper HINTS "${PIPER_ROOT}/lib" REQUIRED)
-    find_library(ONNXRUNTIME_LIBRARY NAMES onnxruntime HINTS "${PIPER_ROOT}/lib" REQUIRED)
-
-    add_executable(piper_probe tools/piper_probe.cpp)
+    add_executable(piper_probe
+        tools/piper_probe.cpp
+        src/libpiper-api.cpp
+        src/piper-engine.cpp
+    )
     set_target_properties(piper_probe PROPERTIES
         OUTPUT_NAME piper-probe
         # Installed next to the other extension binaries:
@@ -103,8 +148,13 @@ if(BUILD_PIPER_PROBE)
         INSTALL_RPATH "$ORIGIN/../../../../lib"
         BUILD_RPATH "${PIPER_ROOT}/lib"
     )
-    target_include_directories(piper_probe PRIVATE "${PIPER_INCLUDE_DIR}")
+    target_include_directories(piper_probe PRIVATE
+        src
+        "${PIPER_INCLUDE_DIR}"
+    )
+    target_compile_definitions(piper_probe PRIVATE HAVE_LIBPIPER=1)
     target_link_libraries(piper_probe PRIVATE
+        Qt6::Core
         "${PIPER_LIBRARY}"
         "${ONNXRUNTIME_LIBRARY}"
     )
