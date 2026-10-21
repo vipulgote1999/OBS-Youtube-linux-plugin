@@ -29,6 +29,18 @@ modules:
       # and its data.  Headers, the static library, pkg-config files, vim
       # addons and man pages are build-only artifacts.
       - rm -rf ${FLATPAK_DEST}/bin ${FLATPAK_DEST}/include ${FLATPAK_DEST}/lib ${FLATPAK_DEST}/share/espeak-ng-data ${FLATPAK_DEST}/share/vim ${FLATPAK_DEST}/share/man ${FLATPAK_DEST}/share/doc
+  # Build-only tool used to isolate our ONNX Runtime SONAME from other OBS
+  # extensions.  BackgroundRemoval's older/newer ONNX Runtime may already be
+  # loaded globally with the same SONAME; a unique name prevents the dynamic
+  # loader from reusing the wrong ABI.
+  - name: patchelf
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 bin/patchelf ${FLATPAK_DEST}/patchelf
+    sources:
+      - type: archive
+        url: https://github.com/NixOS/patchelf/releases/download/0.19.2/patchelf-0.19.2-x86_64.tar.gz
+        sha256: 2abdc34fbe949c995a1baa4ec310896a085588a45a99cd0d726851bdfac2a4bb
   # libpiper + ONNX Runtime + the bundled voice.  Every source is pinned and
   # downloaded by flatpak-builder before the build starts.  The libpiper
   # ExternalProject for espeak-ng is redirected to the local source archive by
@@ -102,6 +114,20 @@ modules:
       # The piper module installs it so this build can compile, then it is
       # pruned once the plugin is built.
       - rm -rf ${FLATPAK_DEST}/include
+      # BackgroundRemoval (or another extension) may have already loaded a
+      # different ONNX Runtime with SONAME libonnxruntime.so.1.  Give ours a
+      # unique SONAME and update every installed consumer so the loader cannot
+      # reuse the incompatible global object.
+      - |
+        if [ -f ${FLATPAK_DEST}/lib/libonnxruntime.so.1.22.0 ]; then
+          mv ${FLATPAK_DEST}/lib/libonnxruntime.so.1.22.0 ${FLATPAK_DEST}/lib/libonnxruntime-ytc.so.1
+          ${FLATPAK_DEST}/patchelf --set-soname libonnxruntime-ytc.so.1 ${FLATPAK_DEST}/lib/libonnxruntime-ytc.so.1
+          ${FLATPAK_DEST}/patchelf --replace-needed libonnxruntime.so.1 libonnxruntime-ytc.so.1 ${FLATPAK_DEST}/lib/libpiper.so
+          ${FLATPAK_DEST}/patchelf --replace-needed libonnxruntime.so.1 libonnxruntime-ytc.so.1 ${FLATPAK_DEST}/lib/obs-plugins/yt-chat-tts.so || true
+          ${FLATPAK_DEST}/patchelf --replace-needed libonnxruntime.so.1 libonnxruntime-ytc.so.1 ${FLATPAK_DEST}/share/obs/obs-plugins/yt-chat-tts/bin/piper-probe || true
+          rm -f ${FLATPAK_DEST}/lib/libonnxruntime.so ${FLATPAK_DEST}/lib/libonnxruntime.so.1
+        fi
+      - rm -f ${FLATPAK_DEST}/patchelf
     sources:
       - type: dir
         path: ..

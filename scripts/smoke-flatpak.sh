@@ -19,7 +19,7 @@ flatpak run --command=sh com.obsproject.Studio -c '
   PIPER_CONFIG="$DATA/piper/en_US-ljspeech-medium.onnx.json"
   PIPER_ESPEAK_DATA="$DATA/piper/espeak-ng-data"
   LIBPIPER="$PREFIX/lib/libpiper.so"
-  ONNXRUNTIME="$PREFIX/lib/libonnxruntime.so.1"
+  ONNXRUNTIME="$PREFIX/lib/libonnxruntime-ytc.so.1"
 
   test -f "$MODULE"
   test -f "$DATA/locale/en-US.ini"
@@ -36,6 +36,11 @@ flatpak run --command=sh com.obsproject.Studio -c '
   test -x "$PROBE"
   test -e "$LIBPIPER"
   test -e "$ONNXRUNTIME"
+  # The generic ONNX SONAME must not remain: another OBS extension may have
+  # loaded a different ABI under that name.
+  test ! -e "$PREFIX/lib/libonnxruntime.so"
+  test ! -e "$PREFIX/lib/libonnxruntime.so.1"
+  test ! -e "$PREFIX/patchelf"
 
   # The bundled voice is exactly LJSpeech; lessac is research-only and must
   # never ship.  The installed tree also drops Piper build-only files.
