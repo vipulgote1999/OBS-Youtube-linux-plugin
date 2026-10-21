@@ -15,6 +15,7 @@
 
 class ChatClient;
 class QTimer;
+class TtsEngine;
 class TtsWorker;
 
 /**
@@ -54,9 +55,11 @@ public:
     void restartWorker();
 
     /* Applies settings that can change without a persistence write: queue
-     * limit, output volume and worker-visible settings.  Engine parameters
-     * (voice/rate/pitch/amplitude) restart the worker while preserving the
-     * queue.  Used by live UI controls; saveSettings() calls it too. */
+     * limit, output volume and worker-visible settings.  A change of engine,
+     * Piper voice, espeak voice, rate, pitch or amplitude restarts the worker
+     * while preserving the queue.  PluginContext is the only place that
+     * chooses/logs the active engine and any espeak fallback.  Used by live UI
+     * controls; saveSettings() calls it too. */
     void applyLiveSettings();
 
     /* Persists settings and applies them live.  Returns false when the file
@@ -76,6 +79,8 @@ private slots:
 
 private:
     bool ensureWorker(QString *error);
+    void installWorker(std::unique_ptr<TtsEngine> engine);
+    bool engineSettingsDiffer() const;
     void applySettingsToWorker();
     void flushDropSummary();
 
@@ -93,7 +98,13 @@ private:
     QTimer *dropLogTimer_ = nullptr;
 
     /* Engine parameters the current worker was created with; used to restart
-     * the worker when voice/rate/pitch/amplitude change. */
+     * the worker when the engine, voice, rate, pitch or amplitude changes.
+     * engineSelection_ is the requested value ("piper"/"espeak"), not the
+     * backend that was actually created after a fallback. */
+    QString engineSelection_;
+    QString enginePiperVoice_;
+    QString enginePiperModelPath_;
+    QString enginePiperConfigPath_;
     QString engineVoice_;
     int engineRate_ = -1;
     int enginePitch_ = -1;

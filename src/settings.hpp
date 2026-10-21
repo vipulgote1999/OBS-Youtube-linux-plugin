@@ -62,3 +62,16 @@ struct Settings {
 
     ChatConfig toChatConfig() const;
 };
+
+/** Speech backend actually used by the TTS worker. */
+enum class TtsBackend { Piper, Espeak };
+
+/**
+ * Chooses the backend from the persisted engine choice and Piper availability.
+ *
+ * An explicit "espeak" selection always wins.  "piper" only selects Piper when
+ * a model is present; otherwise the plugin keeps speaking through espeak-ng
+ * instead of going silent.  Runtime/config checks stay in PluginContext, which
+ * can also fall back for a missing libpiper or helper resource.
+ */
+TtsBackend chooseTtsBackend(const Settings &settings, bool piperModelPresent);

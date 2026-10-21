@@ -201,6 +201,21 @@ if(BUILD_TESTING)
 
     add_test(NAME test_settings COMMAND test_settings)
 
+    add_executable(test_tts_backend
+        tests/test_tts_backend.cpp
+        src/settings.cpp
+        src/paths.cpp
+    )
+
+    target_include_directories(test_tts_backend PRIVATE src)
+    target_link_libraries(test_tts_backend PRIVATE
+        OBS::libobs
+        Qt6::Core
+        Qt6::Test
+    )
+
+    add_test(NAME test_tts_backend COMMAND test_tts_backend)
+
     add_executable(test_text_normalizer
         tests/test_text_normalizer.cpp
         src/text-normalizer.cpp

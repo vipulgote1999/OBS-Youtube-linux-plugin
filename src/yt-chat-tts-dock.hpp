@@ -58,7 +58,6 @@ private:
     void updateSourceStatus();
     void updateValueLabels();
     void updateEngineControls();
-    void logEngineSelection();
     void refreshQueue();
     void refreshStatuses();
     void appendLog(const QString &line);
@@ -75,7 +74,6 @@ private:
     QTimer *liveApplyTimer_ = nullptr;
     bool loading_ = false;
     bool connected_ = false;
-    bool engineRestartPending_ = false;
 
     QLineEdit *urlEdit_ = nullptr;
     QLineEdit *apiKeyEdit_ = nullptr;

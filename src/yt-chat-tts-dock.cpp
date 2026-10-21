@@ -415,7 +415,6 @@ YtChatTtsDock::YtChatTtsDock(PluginContext *context, QWidget *parent)
      * schedule a save or a worker restart. */
     applySettingsToControls();
     updateValueLabels();
-    logEngineSelection();
     updateSourceStatus();
     refreshQueue();
 
@@ -622,10 +621,9 @@ void YtChatTtsDock::onControlChanged()
                                changed == pitchSlider_ || changed == amplitudeSlider_ ||
                                engineSelection;
     if (engineSelection) {
+        /* Coalesce with slider drags: one apply after the user settles on an
+         * engine/voice.  PluginContext owns the restart decision. */
         updateEngineControls();
-        /* Coalesce with slider drags: one restart after the user settles on an
-         * engine/voice instead of restarting on every intermediate change. */
-        engineRestartPending_ = true;
     }
     if (engineControl) {
         liveApplyTimer_->start();
@@ -646,19 +644,10 @@ void YtChatTtsDock::applyLiveSettingsNow()
 
     context_->settings() = settingsFromControls();
 
-    /* The engine is chosen when the worker is created.  Restart first so the
-     * fresh worker bakes in the new engine/voice and records its parameters;
-     * applyLiveSettings() then updates volume/queue limits without a second
-     * restart.  No worker exists before the first connect/test, in which case
-     * restartWorker() creates one. */
-    if (engineRestartPending_) {
-        engineRestartPending_ = false;
-        context_->restartWorker();
-        context_->applyLiveSettings();
-        logEngineSelection();
-        return;
-    }
-
+    /* PluginContext detects engine/voice/rate changes from the settings it was
+     * given and restarts the worker itself.  It is also the only place that
+     * logs the active engine, so a missing Piper model is reported as the
+     * espeak fallback rather than a false "Piper active" claim. */
     context_->applyLiveSettings();
 }
 
@@ -687,6 +676,11 @@ void YtChatTtsDock::onConnectClicked()
         return;
     }
 
+    /* Flush any coalesced engine/voice apply first: saveSettings() applies the
+     * settings synchronously, and PluginContext restarts before connectChat()
+     * starts speech.  This prevents a pending timer from clearing the first
+     * utterance or recreating the worker after the connection starts. */
+    liveApplyTimer_->stop();
     saveSettings();
 
     QString error;
@@ -717,6 +711,9 @@ void YtChatTtsDock::onTestVoiceClicked()
         return;
 
     saveTimer_->stop();
+    /* Flush a pending engine/voice apply before queueing the test: the restart
+     * must happen before the first utterance, not while it is being spoken. */
+    liveApplyTimer_->stop();
     saveSettings();
     context_->testVoice();
 
@@ -817,17 +814,6 @@ void YtChatTtsDock::updateEngineControls()
     amplitudeSlider_->setEnabled(!piper);
     pitchSlider_->setToolTip(tooltip);
     amplitudeSlider_->setToolTip(tooltip);
-}
-
-void YtChatTtsDock::logEngineSelection()
-{
-    if (engineCombo_->currentData().toString() == QLatin1String("espeak")) {
-        appendLog(QStringLiteral("tts engine: espeak-ng"));
-        return;
-    }
-
-    appendLog(QStringLiteral("tts engine: piper (") +
-              piperVoiceCombo_->currentData().toString() + QLatin1Char(')'));
 }
 
 void YtChatTtsDock::onStatusChanged(const QString &state, const QString &detail)

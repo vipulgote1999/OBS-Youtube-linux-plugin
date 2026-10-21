@@ -13,9 +13,17 @@
 #include "chat-client.hpp"
 #include "espeak-engine.hpp"
 #include "paths.hpp"
+#include "tts-engine.hpp"
 #include "tts-worker.hpp"
 
+#ifdef HAVE_LIBPIPER
+#include "libpiper-api.hpp"
+#include "piper-engine.hpp"
+#endif
+
 namespace {
+constexpr char kDefaultPiperVoice[] = "en_US-ljspeech-medium";
+
 QString formatMessage(const ChatMessage &msg)
 {
     QString line = msg.author;
@@ -29,6 +37,146 @@ QString formatMessage(const ChatMessage &msg)
     if (!msg.amount.isEmpty())
         line += QStringLiteral(" (") + msg.amount + QLatin1Char(')');
     return line;
+}
+
+QString piperRuntimeProblem()
+{
+#ifdef HAVE_LIBPIPER
+    return {};
+#else
+    // The hard link to libpiper/ONNX Runtime is a packaging-integrity choice:
+    // a host build without the runtime simply speaks through espeak-ng.
+    return QStringLiteral(
+        "this build has no libpiper/ONNX Runtime (HAVE_LIBPIPER is not defined)");
+#endif
+}
+
+QString piperVoiceOrDefault(const Settings &settings)
+{
+    const QString voice = settings.piperVoice.trimmed();
+    return voice.isEmpty() ? QString::fromLatin1(kDefaultPiperVoice) : voice;
+}
+
+struct PiperResources {
+    QString modelPath;
+    QString configPath;
+    QString espeakDataPath;
+    /* Empty when the requested Piper engine can be created; otherwise each
+     * entry explains one missing resource/runtime in user-facing terms. */
+    QStringList problems;
+};
+
+/* Resolves the bundled voice/model/config/espeak data without touching native
+ * code or the UI thread.  Explicit settings paths win over bundled files. */
+PiperResources resolvePiperResources(const Settings &settings)
+{
+    PiperResources resources;
+
+    const QString voice = piperVoiceOrDefault(settings);
+    const QString modelRelative = QStringLiteral("piper/") + voice + QStringLiteral(".onnx");
+    const QString configRelative = modelRelative + QStringLiteral(".json");
+
+    const QString configuredModel = settings.piperModelPath.trimmed();
+    if (!configuredModel.isEmpty()) {
+        if (QFileInfo(configuredModel).isFile()) {
+            resources.modelPath = configuredModel;
+        } else {
+            resources.problems.append(QStringLiteral("piper model does not exist: ") +
+                                      configuredModel);
+        }
+    } else {
+        resources.modelPath = resolveBundledPath(modelRelative);
+        if (resources.modelPath.isEmpty()) {
+            resources.problems.append(
+                QStringLiteral("piper model not found; looked for: ") +
+                bundledPathCandidates(modelRelative).join(QStringLiteral(", ")));
+        }
+    }
+
+    const QString configuredConfig = settings.piperConfigPath.trimmed();
+    if (!configuredConfig.isEmpty()) {
+        if (QFileInfo(configuredConfig).isFile()) {
+            resources.configPath = configuredConfig;
+        } else {
+            resources.problems.append(QStringLiteral("piper config does not exist: ") +
+                                      configuredConfig);
+        }
+    } else {
+        // libpiper's convention: <model>.onnx.json sits next to the model.
+        const QString sibling =
+            resources.modelPath.isEmpty() ? QString()
+                                          : resources.modelPath + QStringLiteral(".json");
+        if (!sibling.isEmpty() && QFileInfo(sibling).isFile())
+            resources.configPath = sibling;
+        else
+            resources.configPath = resolveBundledPath(configRelative);
+
+        if (resources.configPath.isEmpty()) {
+            resources.problems.append(
+                QStringLiteral("piper config not found; looked for: ") +
+                bundledPathCandidates(configRelative).join(QStringLiteral(", ")));
+        }
+    }
+
+    const QString espeakDataRelative = QStringLiteral("piper/espeak-ng-data");
+    resources.espeakDataPath = resolveBundledPath(espeakDataRelative);
+    if (resources.espeakDataPath.isEmpty()) {
+        resources.problems.append(
+            QStringLiteral("piper espeak-ng data not found; looked for: ") +
+            bundledPathCandidates(espeakDataRelative).join(QStringLiteral(", ")));
+    }
+
+    const QString runtimeProblem = piperRuntimeProblem();
+    if (!runtimeProblem.isEmpty())
+        resources.problems.append(runtimeProblem);
+
+    return resources;
+}
+
+struct EspeakSelection {
+    std::unique_ptr<TtsEngine> engine;
+    QString binaryPath;
+    QString dataPath;
+};
+
+/* Resolves and validates the bundled espeak-ng binary.  Errors here are fatal
+ * for the connection/test because espeak-ng is the last-resort engine. */
+bool createEspeakEngine(const Settings &settings, EspeakSelection *selection, QString *error)
+{
+    QString binaryPath = settings.espeakPath;
+    if (binaryPath.isEmpty())
+        binaryPath = resolveBundledPath(QStringLiteral("bin/espeak-ng"));
+
+    if (binaryPath.isEmpty()) {
+        const QString tried = bundledPathCandidates(QStringLiteral("bin/espeak-ng"))
+                                  .join(QStringLiteral(", "));
+        if (error)
+            *error = QStringLiteral("espeak-ng was not found; looked for: ") + tried;
+        return false;
+    }
+
+    const QFileInfo binaryInfo(binaryPath);
+    if (!binaryInfo.exists() || !binaryInfo.isFile()) {
+        if (error)
+            *error = QStringLiteral("espeak-ng does not exist: ") + binaryPath;
+        return false;
+    }
+    if (!binaryInfo.isExecutable()) {
+        if (error)
+            *error = QStringLiteral("espeak-ng is not executable: ") + binaryPath;
+        return false;
+    }
+
+    /* The data directory may legitimately be absent in a host install where
+     * espeak-ng uses its system data; the Flatpak extension always bundles it. */
+    const QString dataPath = resolveBundledPath(QStringLiteral("espeak-ng-data"));
+
+    selection->binaryPath = binaryPath;
+    selection->dataPath = dataPath;
+    selection->engine = std::make_unique<EspeakEngine>(binaryPath, dataPath, settings.voice,
+                                                       settings.rate, settings.pitch,
+                                                       settings.amplitude);
+    return true;
 }
 } // namespace
 
@@ -66,48 +214,93 @@ bool PluginContext::ensureWorker(QString *error)
         error->clear();
 
     if (worker_) {
-        applySettingsToWorker();
-        worker_->start();
-        AudioBus::instance().buffer().setVolume(static_cast<float>(settings_.volume));
-        return true;
+        /* Keep the live worker unless the engine parameters it was created
+         * with have changed since (for example an engine switch that has not
+         * been applied yet because the dock's coalescing timer is pending). */
+        if (!engineSettingsDiffer()) {
+            applySettingsToWorker();
+            worker_->start();
+            AudioBus::instance().buffer().setVolume(static_cast<float>(settings_.volume));
+            return true;
+        }
+
+        worker_->stop();
+        worker_.reset();
+        AudioBus::instance().buffer().clear();
+        emit queueChanged();
+        emit logLine(QStringLiteral("tts worker restarted for engine change"));
     }
 
-    QString binaryPath = settings_.espeakPath;
-    if (binaryPath.isEmpty())
-        binaryPath = resolveBundledPath(QStringLiteral("bin/espeak-ng"));
+    const PiperResources piper = resolvePiperResources(settings_);
+    const bool piperRequested =
+        settings_.ttsEngine.trimmed().compare(QLatin1String("espeak"), Qt::CaseInsensitive) != 0;
+    TtsBackend backend = chooseTtsBackend(settings_, !piper.modelPath.isEmpty());
 
-    if (binaryPath.isEmpty()) {
-        const QString tried = bundledPathCandidates(QStringLiteral("bin/espeak-ng")).join(
-            QStringLiteral(", "));
-        const QString message =
-            QStringLiteral("espeak-ng was not found; looked for: ") + tried;
-        if (error)
-            *error = message;
-        return false;
+    /* A requested Piper engine that cannot be created must never go silent:
+     * speak through espeak-ng and log the exact missing resource/runtime. */
+    if (backend == TtsBackend::Piper && !piper.problems.isEmpty())
+        backend = TtsBackend::Espeak;
+
+    if (backend == TtsBackend::Piper) {
+#ifdef HAVE_LIBPIPER
+        const QString voice = piperVoiceOrDefault(settings_);
+        auto api = std::make_unique<LibPiperApi>(piper.modelPath, piper.configPath,
+                                                 piper.espeakDataPath);
+        installWorker(std::make_unique<PiperEngine>(std::move(api), settings_.rate));
+
+        // Report the engine this context actually created, after every check.
+        emit logLine(QStringLiteral("tts engine: piper (") + voice + QLatin1Char(')'));
+        emit logLine(QStringLiteral("piper model: ") + piper.modelPath);
+        emit logLine(QStringLiteral("piper config: ") + piper.configPath);
+        emit logLine(QStringLiteral("piper data: ") + piper.espeakDataPath);
+#else
+        // Unreachable: piperRuntimeProblem() adds a problem above, but keep a
+        // defensive fallback in case that check ever changes.
+        backend = TtsBackend::Espeak;
+#endif
     }
 
-    const QFileInfo binaryInfo(binaryPath);
-    if (!binaryInfo.exists() || !binaryInfo.isFile()) {
-        const QString message = QStringLiteral("espeak-ng does not exist: ") + binaryPath;
-        if (error)
-            *error = message;
-        return false;
+    if (backend == TtsBackend::Espeak) {
+        if (piperRequested) {
+            const QString reason =
+                piper.problems.isEmpty()
+                    ? QStringLiteral("piper runtime is unavailable")
+                    : piper.problems.join(QStringLiteral("; "));
+            emit logLine(QStringLiteral("tts engine: espeak-ng (fallback: ") + reason +
+                         QLatin1Char(')'));
+        } else {
+            emit logLine(QStringLiteral("tts engine: espeak-ng"));
+        }
+
+        EspeakSelection espeak;
+        if (!createEspeakEngine(settings_, &espeak, error))
+            return false;
+
+        installWorker(std::move(espeak.engine));
+        emit logLine(QStringLiteral("espeak: ") + espeak.binaryPath);
+        emit logLine(espeak.dataPath.isEmpty()
+                         ? QStringLiteral("espeak data: bundled data not found")
+                         : QStringLiteral("espeak data: ") + espeak.dataPath);
     }
-    if (!binaryInfo.isExecutable()) {
-        const QString message = QStringLiteral("espeak-ng is not executable: ") + binaryPath;
-        if (error)
-            *error = message;
-        return false;
-    }
 
-    /* The data directory may legitimately be absent in a host install where
-     * espeak-ng uses its system data; the Flatpak extension always bundles it. */
-    const QString dataPath = resolveBundledPath(QStringLiteral("espeak-ng-data"));
+    applySettingsToWorker();
+    worker_->start();
 
-    auto engine = std::make_unique<EspeakEngine>(binaryPath, dataPath, settings_.voice,
-                                                 settings_.rate, settings_.pitch,
-                                                 settings_.amplitude);
+    engineSelection_ = settings_.ttsEngine;
+    enginePiperVoice_ = settings_.piperVoice;
+    enginePiperModelPath_ = settings_.piperModelPath;
+    enginePiperConfigPath_ = settings_.piperConfigPath;
+    engineVoice_ = settings_.voice;
+    engineRate_ = settings_.rate;
+    enginePitch_ = settings_.pitch;
+    engineAmplitude_ = settings_.amplitude;
 
+    AudioBus::instance().buffer().setVolume(static_cast<float>(settings_.volume));
+    return true;
+}
+
+void PluginContext::installWorker(std::unique_ptr<TtsEngine> engine)
+{
     worker_ = std::make_unique<TtsWorker>(queue_, AudioBus::instance().buffer(),
                                            std::move(engine));
 
@@ -120,20 +313,17 @@ bool PluginContext::ensureWorker(QString *error)
     connect(worker_.get(), &TtsWorker::errorOccurred, this, [this](const QString &text) {
         emit logLine(QStringLiteral("tts error: ") + text);
     });
+}
 
-    applySettingsToWorker();
-    worker_->start();
-
-    engineVoice_ = settings_.voice;
-    engineRate_ = settings_.rate;
-    enginePitch_ = settings_.pitch;
-    engineAmplitude_ = settings_.amplitude;
-
-    AudioBus::instance().buffer().setVolume(static_cast<float>(settings_.volume));
-    emit logLine(QStringLiteral("espeak: ") + binaryPath);
-    emit logLine(dataPath.isEmpty() ? QStringLiteral("espeak data: bundled data not found")
-                                    : QStringLiteral("espeak data: ") + dataPath);
-    return true;
+bool PluginContext::engineSettingsDiffer() const
+{
+    return worker_ && (settings_.ttsEngine != engineSelection_ ||
+                       settings_.piperVoice != enginePiperVoice_ ||
+                       settings_.piperModelPath != enginePiperModelPath_ ||
+                       settings_.piperConfigPath != enginePiperConfigPath_ ||
+                       settings_.voice != engineVoice_ || settings_.rate != engineRate_ ||
+                       settings_.pitch != enginePitch_ ||
+                       settings_.amplitude != engineAmplitude_);
 }
 
 void PluginContext::applySettingsToWorker()
@@ -284,13 +474,11 @@ void PluginContext::applyLiveSettings()
     queue_.setLimit(settings_.queueLimit);
     AudioBus::instance().buffer().setVolume(static_cast<float>(settings_.volume));
 
-    const bool engineChanged = worker_ && (settings_.voice != engineVoice_ ||
-                                           settings_.rate != engineRate_ ||
-                                           settings_.pitch != enginePitch_ ||
-                                           settings_.amplitude != engineAmplitude_);
+    const bool engineChanged = engineSettingsDiffer();
 
     /* Live-appliable settings (author template, max chars) update without a
-     * restart; engine parameters need a fresh EspeakEngine. */
+     * restart; engine parameters need a fresh engine/worker.  The context owns
+     * this decision so the dock cannot double-restart or log a false engine. */
     applySettingsToWorker();
     if (engineChanged)
         restartWorker();

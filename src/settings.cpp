@@ -278,6 +278,15 @@ Settings Settings::loadFromFile(const QString &path, QString *error)
     return settings;
 }
 
+TtsBackend chooseTtsBackend(const Settings &settings, bool piperModelPresent)
+{
+    if (settings.ttsEngine.trimmed().compare(QLatin1String("espeak"), Qt::CaseInsensitive) == 0)
+        return TtsBackend::Espeak;
+    if (!piperModelPresent)
+        return TtsBackend::Espeak;
+    return TtsBackend::Piper;
+}
+
 ChatConfig Settings::toChatConfig() const
 {
     ChatConfig config;
