@@ -36,7 +36,8 @@ the experimental keyless InnerTube provider.
 ## Requirements
 
 - Linux x86-64 with Flatpak 1.14 or newer.
-- OBS Studio from Flathub (tested with **32.2.2**):
+- OBS Studio from Flathub (built against **32.2.2**; live acceptance pending,
+  see [`docs/acceptance-checklist.md`](docs/acceptance-checklist.md)):
   ```bash
   flatpak install flathub com.obsproject.Studio
   ```
@@ -175,11 +176,13 @@ To record it:
    track includes this source. OBS's default track 1 normally does.
 4. Record a short test and confirm the speech is present in the recording.
 
-Scene switches do not stop chat reading: with **Add to all scenes**, the source
-exists in every scene. Removing the source stops audible speech while chat
-continues to be synthesized; re-adding it restores audio for subsequent
-messages. Removing and re-adding the source never crashes OBS and does not
-replay speech buffered before the removal.
+Expected behavior (pending live acceptance; see item 11 in
+[`docs/acceptance-checklist.md`](docs/acceptance-checklist.md)): scene switches
+should not stop chat reading, and with **Add to all scenes** the source exists
+in every scene. Removing the source is intended to stop audible speech while
+chat continues to be synthesized; re-adding it should restore audio for
+subsequent messages. Removal and re-add are expected not to crash OBS and not
+to replay speech buffered before the removal.
 
 ## Provider modes
 
