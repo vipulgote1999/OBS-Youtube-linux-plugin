@@ -1,5 +1,6 @@
 # Build output
 build/
+build-host/
 build-flatpak/
 dist/
 

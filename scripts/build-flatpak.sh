@@ -23,4 +23,8 @@ if ! command -v flatpak-builder >/dev/null 2>&1; then
     runner=(flatpak run org.flatpak.Builder)
 fi
 
+# CMake installs dist/ytchat-helper into the extension; build it before
+# flatpak-builder copies the source tree into the sandbox.
+"${REPO_ROOT}/scripts/build-helper.sh"
+
 "${runner[@]}" --user --install --force-clean build-flatpak "${MANIFEST}"
