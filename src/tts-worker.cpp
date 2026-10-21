@@ -108,6 +108,13 @@ void TtsWorker::run()
         if (!running_.load())
             break;
 
+        /* Reset the engine's cancel mark only after the running check.  The
+         * second check closes the race with stop(): a stop before reset is
+         * caught here, and a stop after reset is observed by synthesize(). */
+        engine_->resetCancel();
+        if (!running_.load())
+            break;
+
         const Settings settings = settingsSnapshot();
         const QString text = TextNormalizer::render(msg, settings);
         if (text.trimmed().isEmpty())

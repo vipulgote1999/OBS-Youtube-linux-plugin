@@ -6,7 +6,10 @@
 #include <QMutexLocker>
 #include <QStringList>
 
+#include <atomic>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 #include "audio-buffer.hpp"
@@ -71,6 +74,7 @@ public:
     }
 
     void cancel() override {}
+    void resetCancel() override {}
 
 private:
     SynthRecorder *recorder_;
@@ -92,8 +96,63 @@ public:
     }
 
     void cancel() override {}
+    void resetCancel() override {}
 
 private:
+    SynthRecorder *recorder_;
+};
+
+/* Reproduces the stop/cancel race: synthesize() announces that it started and
+ * then blocks until cancel() arrives.  If synthesize() (rather than the worker)
+ * cleared the cancel mark, stop() would hang here. */
+class BlockingTtsEngine : public TtsEngine {
+public:
+    explicit BlockingTtsEngine(SynthRecorder *recorder) : recorder_(recorder) {}
+
+    bool synthesize(const QString &text, std::vector<float> *pcm, int *sampleRate,
+                    QString *error) override
+    {
+        recorder_->record(text);
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            started_ = true;
+        }
+        cv_.notify_all();
+
+        std::unique_lock<std::mutex> lock(mutex_);
+        cv_.wait(lock, [this]() { return cancelled_; });
+
+        pcm->clear();
+        *sampleRate = 0;
+        if (error)
+            *error = QStringLiteral("cancelled");
+        return false;
+    }
+
+    void cancel() override
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            cancelled_ = true;
+        }
+        cv_.notify_all();
+    }
+
+    /* One-shot engine; cancel state is intentionally not cleared. */
+    void resetCancel() override {}
+
+    bool hasStarted() const
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return started_;
+    }
+
+private:
+    mutable std::mutex mutex_;
+    std::condition_variable cv_;
+    bool started_ = false;
+    bool cancelled_ = false;
     SynthRecorder *recorder_;
 };
 } // namespace
@@ -105,6 +164,7 @@ private slots:
     void TestTtsWorkerStopJoins();
     void failureContinuesToNextMessage();
     void rendersWithProvidedSettings();
+    void stopDuringSynthesisReturnsPromptly();
 };
 
 void TestTtsWorker::TestTtsWorkerStopJoins()
@@ -201,6 +261,31 @@ void TestTtsWorker::rendersWithProvidedSettings()
     QCOMPARE(recorder.texts().at(0), QStringLiteral("hello"));
 
     worker.stop();
+}
+
+void TestTtsWorker::stopDuringSynthesisReturnsPromptly()
+{
+    TtsQueue queue;
+    AudioBuffer audio;
+    SynthRecorder recorder;
+
+    queue.push(makeMessage(QStringLiteral("6")), 0);
+
+    auto engine = std::make_unique<BlockingTtsEngine>(&recorder);
+    BlockingTtsEngine *enginePtr = engine.get();
+    TtsWorker worker(queue, audio, std::move(engine));
+
+    worker.start();
+    QTRY_VERIFY_WITH_TIMEOUT(enginePtr->hasStarted(), 5000);
+
+    /* stop() must cancel the in-flight synthesis instead of joining until a
+     * 15 s synthesis timeout. */
+    QElapsedTimer stopTimer;
+    stopTimer.start();
+    worker.stop();
+    QVERIFY2(stopTimer.elapsed() < 3000, "stop() waited for the blocking synthesis");
+    QCOMPARE(recorder.count(), 1);
+    QCOMPARE(audio.available(), size_t(0));
 }
 
 QTEST_GUILESS_MAIN(TestTtsWorker)

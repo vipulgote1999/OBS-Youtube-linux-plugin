@@ -80,6 +80,7 @@ private slots:
     void synthesizesPcmViaFakeEspeak();
     void reportsNonZeroExit();
     void cancelStopsSynthesis();
+    void cancelBeforeSynthesizeIsNotLost();
 };
 
 void TestEspeakEngine::synthesizesPcmViaFakeEspeak()
@@ -178,6 +179,35 @@ void TestEspeakEngine::cancelStopsSynthesis()
     QVERIFY(!ok.load());
     QVERIFY2(error.contains(QStringLiteral("cancelled")), qPrintable(error));
     QVERIFY(cancelTimer.elapsed() < 3000);
+}
+
+void TestEspeakEngine::cancelBeforeSynthesizeIsNotLost()
+{
+    /* Regression for the stop/cancel race: synthesize() must not clear a
+     * cancel mark that arrived between the worker's running check and the
+     * engine call.  Only resetCancel() may clear it. */
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+
+    const QString wavPath = temp.filePath(QStringLiteral("speech.wav"));
+    QVERIFY(writeWav(wavPath, 0, 16384));
+    qputenv("FAKE_ESPEAK_WAV", wavPath.toUtf8());
+
+    EspeakEngine engine(QStringLiteral(TEST_FIXTURES_DIR "/fake-espeak.sh"), QString(),
+                        QStringLiteral("en-us"), 165, 50, 150);
+
+    engine.cancel();
+
+    std::vector<float> pcm;
+    int sampleRate = 0;
+    QString error;
+    const bool ok = engine.synthesize(QStringLiteral("hello"), &pcm, &sampleRate, &error);
+    clearFakeEnvironment();
+
+    QVERIFY(!ok);
+    QVERIFY2(error.contains(QStringLiteral("cancelled")), qPrintable(error));
+    QVERIFY(pcm.empty());
+    QCOMPARE(sampleRate, 0);
 }
 
 QTEST_GUILESS_MAIN(TestEspeakEngine)

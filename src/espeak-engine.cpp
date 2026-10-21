@@ -54,7 +54,9 @@ bool EspeakEngine::synthesize(const QString &text, std::vector<float> *pcm, int 
     pcm->clear();
     *sampleRate = 0;
 
-    cancel_ = false;
+    /* The worker calls resetCancel() before synthesizing; clearing cancel_
+     * here would swallow a stop() that landed after the worker's running
+     * check and let this utterance run into the 15 s timeout. */
 
     if (binaryPath_.isEmpty())
         return fail(error, QStringLiteral("espeak-ng binary path is empty"));
@@ -154,4 +156,9 @@ bool EspeakEngine::synthesize(const QString &text, std::vector<float> *pcm, int 
 void EspeakEngine::cancel()
 {
     cancel_ = true;
+}
+
+void EspeakEngine::resetCancel()
+{
+    cancel_ = false;
 }

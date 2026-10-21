@@ -22,6 +22,7 @@ public:
     bool synthesize(const QString &text, std::vector<float> *pcm, int *sampleRate,
                     QString *error) override;
     void cancel() override;
+    void resetCancel() override;
 
 private:
     QString binaryPath_;
