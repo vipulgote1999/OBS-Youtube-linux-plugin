@@ -5,6 +5,7 @@
 #include <QtGlobal>
 
 #include <cstddef>
+#include <exception>
 #include <utility>
 
 namespace {
@@ -33,9 +34,23 @@ LibPiperApi::LibPiperApi(QString modelPath, QString configPath, QString espeakDa
 LibPiperApi::~LibPiperApi()
 {
     std::lock_guard<std::mutex> lock(synthesizerMutex_);
-    if (synthesizer_) {
-        piper_free(synthesizer_);
-        synthesizer_ = nullptr;
+    destroySynthesizerLocked();
+}
+
+void LibPiperApi::destroySynthesizerLocked() noexcept
+{
+    if (!synthesizer_)
+        return;
+
+    // Null the member first: even if piper_free() throws, no later call can
+    // reuse a half-destroyed synthesizer.
+    piper_synthesizer *synth = synthesizer_;
+    synthesizer_ = nullptr;
+    try {
+        piper_free(synth);
+    } catch (...) {
+        // A failure while freeing the native synthesizer cannot be reported
+        // from the destructor or recovered; avoid crossing the C++ boundary.
     }
 }
 
@@ -53,11 +68,30 @@ bool LibPiperApi::ensureSynthesizer(QString *error)
     const QByteArray configPath = toNativePath(configPath_);
     const QByteArray espeakDataPath = toNativePath(espeakDataPath_);
 
-    // libpiper treats NULL as "model_path + .json" for the config and "not
-    // needed" for the espeak-ng data, so only pass non-empty overrides.
-    synthesizer_ = piper_create(modelPath.constData(),
-                                configPath.isEmpty() ? nullptr : configPath.constData(),
-                                espeakDataPath.isEmpty() ? nullptr : espeakDataPath.constData());
+    // libpiper throws (nlohmann/json, ONNX Runtime, allocation) on missing or
+    // corrupt model/config files.  The exception must not cross the C ABI into
+    // OBS, so convert it to a synthesis error and never keep a partial handle.
+    try {
+        // libpiper treats NULL as "model_path + .json" for the config and "not
+        // needed" for the espeak-ng data, so only pass non-empty overrides.
+        synthesizer_ = piper_create(modelPath.constData(),
+                                    configPath.isEmpty() ? nullptr : configPath.constData(),
+                                    espeakDataPath.isEmpty() ? nullptr
+                                                             : espeakDataPath.constData());
+    } catch (const std::exception &e) {
+        synthesizer_ = nullptr;
+        return fail(error,
+                    QStringLiteral("failed to load Piper model '%1' (config '%2', "
+                                   "espeak-ng data '%3'): %4")
+                        .arg(modelPath_, configPath_, espeakDataPath_,
+                             QString::fromUtf8(e.what())));
+    } catch (...) {
+        synthesizer_ = nullptr;
+        return fail(error, QStringLiteral("failed to load Piper model '%1' (config '%2', "
+                                          "espeak-ng data '%3'): unknown exception")
+                               .arg(modelPath_, configPath_, espeakDataPath_));
+    }
+
     if (!synthesizer_) {
         return fail(error, QStringLiteral("failed to load Piper model '%1' (config '%2', "
                                           "espeak-ng data '%3')")
@@ -89,46 +123,67 @@ bool LibPiperApi::synthesize(const QString &text, float lengthScale, std::vector
         return false;
 
     const QByteArray textUtf8 = text.toUtf8();
-    piper_synthesize_options options = piper_default_synthesize_options(synthesizer_);
-    options.length_scale = lengthScale;
-
-    int rc = piper_synthesize_start(synthesizer_, textUtf8.constData(), &options);
-    if (rc != PIPER_OK) {
-        return fail(error, QStringLiteral("piper_synthesize_start failed (rc=%1)").arg(rc));
-    }
-
     int rate = 0;
-    bool finished = false;
-    while (!finished) {
-        if (cancelRequested_.load()) {
-            pcm->clear();
-            return fail(error, QStringLiteral("cancelled"));
+
+    // libpiper's C API is not noexcept: nlohmann/json and ONNX Runtime can
+    // throw.  Keep every call inside this boundary so a missing/corrupt voice
+    // or runtime failure becomes a normal synthesis error instead of aborting
+    // OBS.  A throw leaves libpiper's stream state unknown, so drop the
+    // synthesizer and let the next utterance create it again.
+    try {
+        piper_synthesize_options options = piper_default_synthesize_options(synthesizer_);
+        options.length_scale = lengthScale;
+
+        int rc = piper_synthesize_start(synthesizer_, textUtf8.constData(), &options);
+        if (rc != PIPER_OK) {
+            return fail(error, QStringLiteral("piper_synthesize_start failed (rc=%1)").arg(rc));
         }
 
-        piper_audio_chunk chunk{};
-        rc = piper_synthesize_next(synthesizer_, &chunk);
-        if (rc != PIPER_OK && rc != PIPER_DONE) {
-            pcm->clear();
-            return fail(error, QStringLiteral("piper_synthesize_next failed (rc=%1)").arg(rc));
-        }
-
-        // PIPER_DONE still fills the final chunk, so consume it before
-        // stopping.
-        if (chunk.samples && chunk.num_samples > 0) {
-            pcm->insert(pcm->end(), chunk.samples, chunk.samples + chunk.num_samples);
-        }
-        if (chunk.sample_rate > 0) {
-            if (rate == 0) {
-                rate = chunk.sample_rate;
-            } else if (chunk.sample_rate != rate) {
+        bool finished = false;
+        while (!finished) {
+            if (cancelRequested_.load()) {
                 pcm->clear();
-                return fail(error, QStringLiteral("piper sample rate changed from %1 Hz to %2 Hz")
-                                       .arg(rate)
-                                       .arg(chunk.sample_rate));
+                return fail(error, QStringLiteral("cancelled"));
             }
-        }
 
-        finished = (rc == PIPER_DONE) || chunk.is_last;
+            piper_audio_chunk chunk{};
+            rc = piper_synthesize_next(synthesizer_, &chunk);
+            if (rc != PIPER_OK && rc != PIPER_DONE) {
+                pcm->clear();
+                return fail(error,
+                            QStringLiteral("piper_synthesize_next failed (rc=%1)").arg(rc));
+            }
+
+            // PIPER_DONE still fills the final chunk, so consume it before
+            // stopping.
+            if (chunk.samples && chunk.num_samples > 0) {
+                pcm->insert(pcm->end(), chunk.samples, chunk.samples + chunk.num_samples);
+            }
+            if (chunk.sample_rate > 0) {
+                if (rate == 0) {
+                    rate = chunk.sample_rate;
+                } else if (chunk.sample_rate != rate) {
+                    pcm->clear();
+                    return fail(error,
+                                QStringLiteral("piper sample rate changed from %1 Hz to %2 Hz")
+                                    .arg(rate)
+                                    .arg(chunk.sample_rate));
+                }
+            }
+
+            finished = (rc == PIPER_DONE) || chunk.is_last;
+        }
+    } catch (const std::exception &e) {
+        pcm->clear();
+        *sampleRate = 0;
+        destroySynthesizerLocked();
+        return fail(error, QStringLiteral("piper synthesis failed: %1")
+                               .arg(QString::fromUtf8(e.what())));
+    } catch (...) {
+        pcm->clear();
+        *sampleRate = 0;
+        destroySynthesizerLocked();
+        return fail(error, QStringLiteral("piper synthesis failed: unknown exception"));
     }
 
     if (rate != kPiperSampleRate) {

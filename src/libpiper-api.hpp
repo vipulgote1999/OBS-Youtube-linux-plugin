@@ -37,6 +37,8 @@ public:
 
 private:
     bool ensureSynthesizer(QString *error);
+    // Frees and nulls synthesizer_; callers must hold synthesizerMutex_.
+    void destroySynthesizerLocked() noexcept;
 
     QString modelPath_;
     QString configPath_;
