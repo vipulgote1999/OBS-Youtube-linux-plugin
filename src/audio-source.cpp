@@ -119,6 +119,11 @@ void audio_source_destroy(void *ptr)
     data->running.store(false, std::memory_order_relaxed);
     if (data->feeder.joinable())
         data->feeder.join();
+
+    /* Do not leave up to 120 s of stale speech in the shared buffer: removing
+     * the source and re-adding it must not replay the previous session. */
+    AudioBus::instance().buffer().clear();
+
     delete data;
 }
 

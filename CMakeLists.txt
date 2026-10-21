@@ -24,6 +24,10 @@ add_library(yt-chat-tts MODULE
     src/audio-buffer.cpp
     src/audio-bus.cpp
     src/audio-source.cpp
+    src/tts-worker.cpp
+    src/plugin-context.cpp
+    src/plugin-context.hpp
+    src/tts-worker.hpp
 )
 
 # libobs (and OBS Flatpak plugin extensions) load modules as <name>.so on
@@ -183,4 +187,23 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME test_audio_buffer COMMAND test_audio_buffer)
+
+    add_executable(test_tts_worker
+        tests/test_tts_worker.cpp
+        src/tts-worker.hpp
+        src/tts-worker.cpp
+        src/tts-queue.cpp
+        src/audio-buffer.cpp
+        src/text-normalizer.cpp
+    )
+
+    target_include_directories(test_tts_worker PRIVATE src)
+    target_link_libraries(test_tts_worker PRIVATE
+        OBS::libobs
+        Qt6::Core
+        Qt6::Test
+    )
+
+    add_test(NAME test_tts_worker COMMAND test_tts_worker)
+    set_tests_properties(test_tts_worker PROPERTIES TIMEOUT 30)
 endif()

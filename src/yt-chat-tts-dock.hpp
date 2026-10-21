@@ -2,10 +2,9 @@
 
 #include <QWidget>
 
-#include "chat-message.hpp"
 #include "settings.hpp"
 
-class ChatClient;
+class PluginContext;
 class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
@@ -19,26 +18,36 @@ class QTimer;
 /**
  * YouTube Chat TTS dock widget.
  *
- * Owns the connection UI around ChatClient plus the persisted settings
- * controls.  Settings load once at construction and save on a 500 ms debounce
- * (or immediately through the Save button).  Chat messages are logged but not
- * spoken yet; the TTS queue arrives in a later task.
+ * Holds only the settings/connection UI plus a non-owning PluginContext
+ * pointer.  PluginContext owns ChatClient, MessageFilter, TtsQueue, TtsWorker
+ * and the current Settings; the dock edits context->settings() and asks the
+ * context to save/connect.
  *
- * Lifetime: owned by the OBS frontend through the OBSDock wrapper created
- * by obs_frontend_add_dock_by_id(); never delete the registered widget.
+ * Settings load once at construction and save on a 500 ms debounce (or
+ * immediately through Save/Connect).
+ *
+ * Lifetime: owned by the OBS frontend through the OBSDock wrapper created by
+ * obs_frontend_add_dock_by_id(); never delete the registered widget.  The
+ * context outlives this widget during plugin unload, and the destroyed()
+ * connection clears context_ if the context ever goes away first.
  */
 class YtChatTtsDock : public QWidget {
     Q_OBJECT
 
 public:
-    explicit YtChatTtsDock(QWidget *parent = nullptr);
+    explicit YtChatTtsDock(PluginContext *context, QWidget *parent = nullptr);
     ~YtChatTtsDock() override;
 
 private:
     void onConnectClicked();
     void onSaveClicked();
+    void onTestVoiceClicked();
+    void onSkipClicked();
+    void onClearQueueClicked();
     void onAddSourceClicked(bool allScenes);
-    void onEvent(const ChatEvent &event);
+    void onStatusChanged(const QString &state, const QString &detail);
+    void onLogLine(const QString &line);
+    void onQueueChanged();
     void setConnected(bool connected);
     void updateSourceStatus();
     void appendLog(const QString &line);
@@ -48,10 +57,10 @@ private:
     void scheduleSave();
     void saveSettings();
 
-    ChatClient *client_ = nullptr;
+    PluginContext *context_ = nullptr;
     QTimer *saveTimer_ = nullptr;
-    Settings settings_;
     bool loading_ = false;
+    bool connected_ = false;
 
     QLineEdit *urlEdit_ = nullptr;
     QLineEdit *apiKeyEdit_ = nullptr;
@@ -76,9 +85,13 @@ private:
     QCheckBox *readModeratorsCheck_ = nullptr;
     QPushButton *connectButton_ = nullptr;
     QPushButton *saveButton_ = nullptr;
+    QPushButton *testVoiceButton_ = nullptr;
+    QPushButton *skipButton_ = nullptr;
+    QPushButton *clearQueueButton_ = nullptr;
     QPushButton *addSourceButton_ = nullptr;
     QPushButton *addSourceAllButton_ = nullptr;
     QLabel *statusLabel_ = nullptr;
     QLabel *sourceStatusLabel_ = nullptr;
+    QLabel *queueLabel_ = nullptr;
     QPlainTextEdit *logView_ = nullptr;
 };
