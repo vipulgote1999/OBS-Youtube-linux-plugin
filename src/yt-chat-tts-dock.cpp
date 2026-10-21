@@ -372,29 +372,37 @@ YtChatTtsDock::YtChatTtsDock(PluginContext *context, QWidget *parent)
     /* Queue                                                            */
     /* ---------------------------------------------------------------- */
     auto *queueGroup = new QGroupBox(uiText("Queue.Group", "Queue"), this);
-    auto *queueLayout = new QVBoxLayout(queueGroup);
+    queueGroup->setCheckable(true);
+    queueGroup->setChecked(false);
+    auto *queueGroupLayout = new QVBoxLayout(queueGroup);
+    auto *queueContent = new QWidget(queueGroup);
+    auto *queueLayout = new QVBoxLayout(queueContent);
+    queueLayout->setContentsMargins(0, 0, 0, 0);
+    queueGroupLayout->addWidget(queueContent);
 
     queueLabel_ = new QLabel(uiTextf("Queue.Count", "Queue: %1", QStringLiteral("0")),
-                             queueGroup);
+                             queueContent);
     queueLayout->addWidget(queueLabel_);
 
-    queueList_ = new QListWidget(queueGroup);
+    queueList_ = new QListWidget(queueContent);
     queueList_->setMaximumHeight(110);
     queueList_->setSelectionMode(QAbstractItemView::NoSelection);
     queueList_->setFocusPolicy(Qt::NoFocus);
     queueLayout->addWidget(queueList_);
 
     auto *queueButtons = new QHBoxLayout;
-    skipButton_ = new QPushButton(uiText("Queue.Skip", "Skip Current"), queueGroup);
+    skipButton_ = new QPushButton(uiText("Queue.Skip", "Skip Current"), queueContent);
     skipButton_->setToolTip(
         uiText("Queue.SkipTooltip", "Stops queued messages; the current message may finish."));
-    clearQueueButton_ = new QPushButton(uiText("Queue.Clear", "Clear Queue"), queueGroup);
+    clearQueueButton_ = new QPushButton(uiText("Queue.Clear", "Clear Queue"), queueContent);
     clearQueueButton_->setToolTip(
         uiText("Queue.ClearTooltip", "Removes every queued message."));
     queueButtons->addWidget(skipButton_);
     queueButtons->addWidget(clearQueueButton_);
     queueButtons->addStretch(1);
     queueLayout->addLayout(queueButtons);
+    connect(queueGroup, &QGroupBox::toggled, queueContent, &QWidget::setVisible);
+    queueContent->setVisible(false);
 
     rootLayout->addWidget(queueGroup);
 
@@ -402,20 +410,28 @@ YtChatTtsDock::YtChatTtsDock(PluginContext *context, QWidget *parent)
     /* Log                                                              */
     /* ---------------------------------------------------------------- */
     auto *logGroup = new QGroupBox(uiText("Log.Group", "Log"), this);
-    auto *logLayout = new QVBoxLayout(logGroup);
+    logGroup->setCheckable(true);
+    logGroup->setChecked(false);
+    auto *logGroupLayout = new QVBoxLayout(logGroup);
+    auto *logContent = new QWidget(logGroup);
+    auto *logLayout = new QVBoxLayout(logContent);
+    logLayout->setContentsMargins(0, 0, 0, 0);
+    logGroupLayout->addWidget(logContent);
 
     auto *logHeader = new QHBoxLayout;
-    clearLogButton_ = new QPushButton(uiText("Log.Clear", "Clear Log"), logGroup);
+    clearLogButton_ = new QPushButton(uiText("Log.Clear", "Clear Log"), logContent);
     logHeader->addStretch(1);
     logHeader->addWidget(clearLogButton_);
     logLayout->addLayout(logHeader);
 
-    logView_ = new QPlainTextEdit(logGroup);
+    logView_ = new QPlainTextEdit(logContent);
     logView_->setReadOnly(true);
     logView_->setMaximumBlockCount(kLogLineLimit);
     logView_->setMinimumHeight(100);
     logLayout->addWidget(logView_, 1);
-    rootLayout->addWidget(logGroup, 2);
+    connect(logGroup, &QGroupBox::toggled, logContent, &QWidget::setVisible);
+    logContent->setVisible(false);
+    rootLayout->addWidget(logGroup);
 
     /* Seed the controls before wiring signals so loading saved values cannot
      * schedule a save or a worker restart. */
