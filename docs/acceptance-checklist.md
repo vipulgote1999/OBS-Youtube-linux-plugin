@@ -219,7 +219,7 @@ records the date and result:
 
 | # | Status | Check | How to run / expected result |
 | --- | --- | --- | --- |
-| P1 | PENDING | Extension reloads with Piper | Restart OBS. Log shows `tts engine: piper (en_US-ljspeech-medium)`, the model/config/data paths, and no error. |
+| P1 | PENDING | Extension reloads with Piper | Restart OBS, then click **Test Voice** or **Connect** (the worker is created on first speech use). Log shows `tts engine: piper (en_US-ljspeech-medium)`, the model/config/data paths, and no error. |
 | P2 | PENDING | Test Voice with Piper | Select **Engine = Piper — natural (CPU)**, click **Test Voice**. Audio Mixer shows a level and the sentence is audible; log has no fallback line. |
 | P3 | PENDING | Rate mapping is audible | Change **Rate** (for example 120 → 300). The next Test Voice utterance changes speed, the queue survives, and the connection (if any) stays up. |
 | P4 | PENDING | Live chat message is spoken with Piper | Connect to a public live chat, confirm real messages are spoken with the natural voice, and no model reload occurs per message (no repeated multi-second stalls). |
