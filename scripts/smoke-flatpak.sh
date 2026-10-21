@@ -13,6 +13,12 @@ flatpak run --command=sh com.obsproject.Studio -c '
   HELPER="$DATA/bin/ytchat-helper"
   ESPEAK="$DATA/bin/espeak-ng"
   LICENSES="$PREFIX/share/licenses/com.obsproject.Studio.Plugin.YtChatTts"
+  PROBE="$DATA/bin/piper-probe"
+  PIPER_MODEL="$DATA/piper/en_US-ljspeech-medium.onnx"
+  PIPER_CONFIG="$DATA/piper/en_US-ljspeech-medium.onnx.json"
+  PIPER_ESPEAK_DATA="$DATA/piper/espeak-ng-data"
+  LIBPIPER="$PREFIX/lib/libpiper.so"
+  ONNXRUNTIME="$PREFIX/lib/libonnxruntime.so.1"
 
   test -f "$MODULE"
   test -f "$DATA/locale/en-US.ini"
@@ -22,6 +28,13 @@ flatpak run --command=sh com.obsproject.Studio -c '
 
   test -x "$ESPEAK"
   test -d "$DATA/espeak-ng-data"
+
+  test -f "$PIPER_MODEL"
+  test -f "$PIPER_CONFIG"
+  test -d "$PIPER_ESPEAK_DATA"
+  test -x "$PROBE"
+  test -e "$LIBPIPER"
+  test -e "$ONNXRUNTIME"
 
   test -f "$PREFIX/share/metainfo/com.obsproject.Studio.Plugin.YtChatTts.metainfo.xml"
   test -f "$LICENSES/LICENSE"
@@ -45,7 +58,7 @@ flatpak run --command=sh com.obsproject.Studio -c '
     test -f "$LICENSES/$license"
   done
 
-  for binary in "$MODULE" "$ESPEAK"; do
+  for binary in "$MODULE" "$ESPEAK" "$PROBE" "$LIBPIPER"; do
     if ldd "$binary" | grep "not found"; then
       echo "smoke: missing shared library for $binary" >&2
       exit 1
@@ -58,4 +71,4 @@ flatpak run --command=sh com.obsproject.Studio -c '
   test ! -e "$PREFIX/lib/libespeak-ng.a"
 '
 
-echo "smoke: extension installed (module, locale, helper, espeak-ng, metainfo, licenses)"
+echo "smoke: extension installed (module, locale, helper, espeak-ng, piper, metainfo, licenses)"

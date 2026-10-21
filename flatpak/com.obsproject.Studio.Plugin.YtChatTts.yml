@@ -29,12 +29,67 @@ modules:
       # and its data.  Headers, the static library, pkg-config files, vim
       # addons and man pages are build-only artifacts.
       - rm -rf ${FLATPAK_DEST}/bin ${FLATPAK_DEST}/include ${FLATPAK_DEST}/lib ${FLATPAK_DEST}/share/espeak-ng-data ${FLATPAK_DEST}/share/vim ${FLATPAK_DEST}/share/man ${FLATPAK_DEST}/share/doc
+  # libpiper + ONNX Runtime + the bundled voice.  Every source is pinned and
+  # downloaded by flatpak-builder before the build starts.  The libpiper
+  # ExternalProject for espeak-ng is redirected to the local source archive by
+  # flatpak/patches/libpiper-offline.patch, and ONNX Runtime is supplied through
+  # ONNXRUNTIME_DIR, so nothing is fetched during the build.
+  - name: piper
+    buildsystem: simple
+    build-commands:
+      - |
+        cmake -S piper-src/libpiper -B piper-build -G Ninja \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_INSTALL_PREFIX=${FLATPAK_DEST} \
+          -DCMAKE_INSTALL_LIBDIR=lib \
+          -DCMAKE_INSTALL_RPATH='$ORIGIN' \
+          -DBUILD_SHARED_LIBS=ON \
+          -DONNXRUNTIME_DIR=${PWD}/onnxruntime \
+          -DPIPER_ESPEAKNG_SOURCE_DIR=${PWD}/espeak-ng-src
+      - cmake --build piper-build --parallel ${FLATPAK_BUILDER_N_JOBS}
+      - cmake --install piper-build
+      - install -d ${FLATPAK_DEST}/share/obs/obs-plugins/yt-chat-tts/piper
+      - install -Dm644 voice/en_US-ljspeech-medium.onnx ${FLATPAK_DEST}/share/obs/obs-plugins/yt-chat-tts/piper/en_US-ljspeech-medium.onnx
+      - install -Dm644 voice/en_US-ljspeech-medium.onnx.json ${FLATPAK_DEST}/share/obs/obs-plugins/yt-chat-tts/piper/en_US-ljspeech-medium.onnx.json
+      # libpiper needs the newer espeak-ng data that matches its pinned
+      # espeak-ng.  Keep it separate from the 1.51 data used by the existing
+      # espeak-ng CLI so each engine keeps a matching data set.
+      - cp -a ${FLATPAK_DEST}/share/espeak-ng-data ${FLATPAK_DEST}/share/obs/obs-plugins/yt-chat-tts/piper/espeak-ng-data
+      - rm -rf ${FLATPAK_DEST}/share/espeak-ng-data
+    sources:
+      - type: archive
+        url: https://github.com/OHF-Voice/piper1-gpl/archive/refs/tags/v1.7.0.tar.gz
+        sha256: 1fae26c92cd584671122157f3fd5d5500188906f370ad53e0f88e726ebe2e11d
+        strip-components: 1
+        dest: piper-src
+      - type: archive
+        url: https://github.com/espeak-ng/espeak-ng/archive/212928b394a96e8fd2096616bfd54e17845c48f6.tar.gz
+        sha256: 1f201cabc73e569a7cb434d40d3b30980f923010f8ecd4d1c4ae94691ac2888a
+        strip-components: 1
+        dest: espeak-ng-src
+      - type: archive
+        url: https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-linux-x64-1.22.0.tgz
+        sha256: 8344d55f93d5bc5021ce342db50f62079daf39aaafb5d311a451846228be49b3
+        strip-components: 1
+        dest: onnxruntime
+      - type: file
+        url: https://huggingface.co/rhasspy/piper-voices/resolve/5041a7a49ae5b3a0f30e6837769eb03fdbb231bd/en/en_US/ljspeech/medium/en_US-ljspeech-medium.onnx
+        sha256: 6f52a751e2349abe7a76735eb09dc1875298c77ea2342ffd2fef79ff81b87f22
+        dest: voice
+      - type: file
+        url: https://huggingface.co/rhasspy/piper-voices/resolve/5041a7a49ae5b3a0f30e6837769eb03fdbb231bd/en/en_US/ljspeech/medium/en_US-ljspeech-medium.onnx.json
+        sha256: 141d612cc0a95ed7efc1ca936b845c2364967f2e9217c5dbfcf69fc4d6c65860
+        dest: voice
+      - type: patch
+        path: patches/libpiper-offline.patch
   - name: yt-chat-tts
     buildsystem: cmake-ninja
     config-opts:
       - -DCMAKE_INSTALL_PREFIX=/app/plugins/YtChatTts
       - -DCMAKE_PREFIX_PATH=/app
       - -DBUILD_TESTING=OFF
+      - -DBUILD_PIPER_PROBE=ON
+      - -DPIPER_ROOT=/app/plugins/YtChatTts
     post-install:
       - install -Dm644 --target-directory=${FLATPAK_DEST}/share/metainfo ${FLATPAK_BUILDER_BUILDDIR}/${FLATPAK_ID}.metainfo.xml
     sources:

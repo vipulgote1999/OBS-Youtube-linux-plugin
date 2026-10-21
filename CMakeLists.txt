@@ -82,6 +82,38 @@ install(DIRECTORY LICENSES/
     DESTINATION ${YTCHAT_LICENSE_DIR}/LICENSES
 )
 
+# Packaging probe for the Flatpak build.  It is off by default so host builds
+# and host tests do not need libpiper or ONNX Runtime.  The Flatpak manifest
+# enables it once the bundled libraries and voice model have been installed.
+option(BUILD_PIPER_PROBE "Build the Flatpak Piper probe" OFF)
+
+if(BUILD_PIPER_PROBE)
+    set(PIPER_ROOT "" CACHE PATH "Prefix containing libpiper and ONNX Runtime")
+
+    find_path(PIPER_INCLUDE_DIR NAMES piper.h HINTS "${PIPER_ROOT}/include" REQUIRED)
+    find_library(PIPER_LIBRARY NAMES piper HINTS "${PIPER_ROOT}/lib" REQUIRED)
+    find_library(ONNXRUNTIME_LIBRARY NAMES onnxruntime HINTS "${PIPER_ROOT}/lib" REQUIRED)
+
+    add_executable(piper_probe tools/piper_probe.cpp)
+    set_target_properties(piper_probe PROPERTIES
+        OUTPUT_NAME piper-probe
+        # Installed next to the other extension binaries:
+        #   <prefix>/share/obs/obs-plugins/yt-chat-tts/bin/piper-probe
+        # Libraries live in <prefix>/lib.
+        INSTALL_RPATH "$ORIGIN/../../../../lib"
+        BUILD_RPATH "${PIPER_ROOT}/lib"
+    )
+    target_include_directories(piper_probe PRIVATE "${PIPER_INCLUDE_DIR}")
+    target_link_libraries(piper_probe PRIVATE
+        "${PIPER_LIBRARY}"
+        "${ONNXRUNTIME_LIBRARY}"
+    )
+
+    install(TARGETS piper_probe
+        RUNTIME DESTINATION share/obs/obs-plugins/yt-chat-tts/bin
+    )
+endif()
+
 include(CTest)
 if(BUILD_TESTING)
     find_package(Qt6 REQUIRED COMPONENTS Test)
