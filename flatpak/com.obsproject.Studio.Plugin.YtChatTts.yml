@@ -25,7 +25,10 @@ modules:
       - install -Dm755 ${FLATPAK_DEST}/bin/espeak-ng ${FLATPAK_DEST}/share/obs/obs-plugins/yt-chat-tts/bin/espeak-ng
       - cp -a ${FLATPAK_DEST}/share/espeak-ng-data ${FLATPAK_DEST}/share/obs/obs-plugins/yt-chat-tts/
       - strip ${FLATPAK_DEST}/share/obs/obs-plugins/yt-chat-tts/bin/espeak-ng
-      - rm -rf ${FLATPAK_DEST}/bin ${FLATPAK_DEST}/share/espeak-ng-data
+      # Keep only the runtime pieces the extension uses: the standalone engine
+      # and its data.  Headers, the static library, pkg-config files, vim
+      # addons and man pages are build-only artifacts.
+      - rm -rf ${FLATPAK_DEST}/bin ${FLATPAK_DEST}/include ${FLATPAK_DEST}/lib ${FLATPAK_DEST}/share/espeak-ng-data ${FLATPAK_DEST}/share/vim ${FLATPAK_DEST}/share/man ${FLATPAK_DEST}/share/doc
   - name: yt-chat-tts
     buildsystem: cmake-ninja
     config-opts:

@@ -55,12 +55,31 @@ install(DIRECTORY data/
 
 # The Go helper is a gitignored build artifact.  scripts/build-helper.sh (also
 # run by scripts/build-flatpak.sh) produces dist/ytchat-helper before configure.
-install(PROGRAMS ${CMAKE_SOURCE_DIR}/dist/ytchat-helper
-    DESTINATION share/obs/obs-plugins/yt-chat-tts/bin
-)
+# Host builds and tests do not need it; the Flatpak extension always does, and
+# scripts/build-flatpak.sh fails if the helper is missing after its own build.
+if(EXISTS "${CMAKE_SOURCE_DIR}/dist/ytchat-helper")
+    install(PROGRAMS "${CMAKE_SOURCE_DIR}/dist/ytchat-helper"
+        DESTINATION share/obs/obs-plugins/yt-chat-tts/bin
+    )
+else()
+    message(WARNING
+        "dist/ytchat-helper is missing; run scripts/build-helper.sh first. "
+        "The installed plugin cannot read chat without the bundled helper.")
+endif()
 
 install(FILES flatpak/com.obsproject.Studio.Plugin.YtChatTts.metainfo.xml
     DESTINATION share/metainfo
+)
+
+# Ship the project license and every third-party notice with the extension so
+# the installed tree is self-describing.  Only files that exist in the source
+# tree are installed; no license text is generated here.
+set(YTCHAT_LICENSE_DIR "share/licenses/com.obsproject.Studio.Plugin.YtChatTts")
+install(FILES LICENSE THIRD_PARTY_NOTICES.md
+    DESTINATION ${YTCHAT_LICENSE_DIR}
+)
+install(FILES LICENSES/espeak-ng.txt
+    DESTINATION ${YTCHAT_LICENSE_DIR}/LICENSES
 )
 
 include(CTest)

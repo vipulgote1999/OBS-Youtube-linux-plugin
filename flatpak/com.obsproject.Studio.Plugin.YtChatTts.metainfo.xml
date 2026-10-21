@@ -8,20 +8,30 @@
   <project_license>GPL-2.0-or-later</project_license>
   <description>
     <p>
-      YouTube Chat TTS adds a dock to OBS Studio that reads YouTube live chat messages
-      aloud using the bundled espeak-ng offline speech engine and feeds the synthesized
-      speech into OBS as a native audio source, so streams and recordings carry spoken
-      chat like any other audio.
+      YouTube Chat TTS adds a dock to OBS Studio that reads YouTube live chat
+      messages aloud with the bundled offline espeak-ng speech engine and feeds
+      the synthesized speech into OBS as a native audio source. Streams and
+      recordings carry spoken chat like any other audio; no virtual audio cable
+      or cloud speech service is involved.
     </p>
-    <p>
-      This release is the initial Flatpak extension skeleton: the module installs into
-      OBS Studio and shows the placeholder YouTube Chat TTS dock.
-    </p>
+    <ul>
+      <li>Connect with the official YouTube Data API v3 (API key required) or with the experimental keyless InnerTube provider; Auto mode prefers the official API and falls back to InnerTube when it is unavailable.</li>
+      <li>Filter messages by length, per-user and global cooldown, command prefix, URLs, blocklisted phrases, Super Chats, new members and moderators.</li>
+      <li>Choose the espeak-ng voice and adjust rate, pitch, amplitude and output volume while connected.</li>
+      <li>Add the TTS audio source to the current scene or to all scenes and record it on any OBS audio track.</li>
+      <li>See connection state, the active provider, the next queued messages and the last 500 log lines in the dock.</li>
+      <li>Keep settings and the API key in an owner-only (0600) settings file; the key is passed to the helper on stdin and never appears in logs or process arguments.</li>
+    </ul>
   </description>
   <releases>
     <release version="0.1.0" date="2026-10-21">
       <description>
-        <p>Initial extension skeleton with the YouTube Chat TTS dock.</p>
+        <p>First release of the Flatpak extension.</p>
+        <ul>
+          <li>YouTube live chat dock with official API and experimental keyless provider modes, including Auto fallback.</li>
+          <li>Bundled espeak-ng offline speech engine and a native OBS audio source for speech.</li>
+          <li>Message filtering, bounded queue, live voice and volume controls, and persisted settings.</li>
+        </ul>
       </description>
     </release>
   </releases>
