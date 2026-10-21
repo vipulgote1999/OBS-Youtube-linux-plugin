@@ -20,6 +20,10 @@ constexpr int kPitchMin = 0;
 constexpr int kPitchMax = 200;
 constexpr double kVolumeMin = 0.0;
 constexpr double kVolumeMax = 1.5;
+constexpr int kUserCooldownMin = 0;
+constexpr int kUserCooldownMax = 3600;
+constexpr int kGlobalCooldownMin = 0;
+constexpr int kGlobalCooldownMax = 60;
 
 void clampValues(Settings *settings)
 {
@@ -29,6 +33,10 @@ void clampValues(Settings *settings)
     settings->pitch = qBound(kPitchMin, settings->pitch, kPitchMax);
     settings->amplitude = qBound(kPitchMin, settings->amplitude, kPitchMax);
     settings->volume = qBound(kVolumeMin, settings->volume, kVolumeMax);
+    settings->userCooldownSec =
+        qBound(kUserCooldownMin, settings->userCooldownSec, kUserCooldownMax);
+    settings->globalCooldownSec =
+        qBound(kGlobalCooldownMin, settings->globalCooldownSec, kGlobalCooldownMax);
 
     if (settings->provider != QLatin1String("auto") &&
         settings->provider != QLatin1String("official") &&

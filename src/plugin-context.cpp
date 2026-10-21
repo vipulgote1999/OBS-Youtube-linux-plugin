@@ -236,24 +236,31 @@ void PluginContext::restartWorker()
     emit logLine(QStringLiteral("tts worker restarted"));
 }
 
-void PluginContext::saveSettings()
+void PluginContext::applyLiveSettings()
 {
+    queue_.setLimit(settings_.queueLimit);
+    AudioBus::instance().buffer().setVolume(static_cast<float>(settings_.volume));
+
     const bool engineChanged = worker_ && (settings_.voice != engineVoice_ ||
                                            settings_.rate != engineRate_ ||
                                            settings_.pitch != enginePitch_ ||
                                            settings_.amplitude != engineAmplitude_);
-
-    if (!settings_.save())
-        emit logLine(QStringLiteral("settings: save failed"));
-
-    queue_.setLimit(settings_.queueLimit);
-    AudioBus::instance().buffer().setVolume(static_cast<float>(settings_.volume));
 
     /* Live-appliable settings (author template, max chars) update without a
      * restart; engine parameters need a fresh EspeakEngine. */
     applySettingsToWorker();
     if (engineChanged)
         restartWorker();
+}
+
+bool PluginContext::saveSettings()
+{
+    const bool saved = settings_.save();
+    if (!saved)
+        emit logLine(QStringLiteral("settings: save failed"));
+
+    applyLiveSettings();
+    return saved;
 }
 
 bool PluginContext::hasAudioSource() const

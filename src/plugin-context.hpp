@@ -51,7 +51,15 @@ public:
      * with the current engine settings.  Queued messages are preserved. */
     void restartWorker();
 
-    void saveSettings();
+    /* Applies settings that can change without a persistence write: queue
+     * limit, output volume and worker-visible settings.  Engine parameters
+     * (voice/rate/pitch/amplitude) restart the worker while preserving the
+     * queue.  Used by live UI controls; saveSettings() calls it too. */
+    void applyLiveSettings();
+
+    /* Persists settings and applies them live.  Returns false when the file
+     * could not be written; the failure is also emitted as a log line. */
+    bool saveSettings();
 
     bool hasAudioSource() const;
     std::vector<ChatMessage> queueSnapshot(size_t max) const;

@@ -86,8 +86,10 @@ class TestSettings : public QObject {
 private slots:
     void roundTripsThroughObsData();
     void savesWithOwnerOnlyPermissionsAndReloads();
+    void dockFacingSettingsRoundTripThroughFile();
     void loadsDefaultsForMissingFile();
     void clampsInvalidValues();
+    void acceptsCooldownBoundaries();
 };
 
 void TestSettings::roundTripsThroughObsData()
@@ -123,6 +125,71 @@ void TestSettings::savesWithOwnerOnlyPermissionsAndReloads()
     const Settings restored = Settings::loadFromFile(path, &error);
     QVERIFY2(error.isEmpty(), qPrintable(error));
     compareSettings(restored, original);
+}
+
+void TestSettings::dockFacingSettingsRoundTripThroughFile()
+{
+    /* Mirrors the dock path: every control is copied into Settings, written
+     * with Settings::saveToFile(), and reloaded from disk.  Keeping this
+     * explicit (rather than reusing changedSettings()) documents the complete
+     * UI-facing surface and fails if a control loses its persisted field. */
+    QTemporaryDir directory;
+    QVERIFY2(directory.isValid(), "temporary directory is not available");
+    const QString path = directory.filePath(QStringLiteral("settings.json"));
+
+    Settings original;
+    original.provider = QStringLiteral("official");
+    original.apiKey = QStringLiteral("AIza-dock-test-key");
+    original.videoUrl = QStringLiteral("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+    original.voice = QStringLiteral("en-gb-scotland");
+    original.rate = 220;
+    original.pitch = 70;
+    original.amplitude = 180;
+    original.volume = 0.35;
+    original.readAuthor = false;
+    original.authorTemplate = QStringLiteral("{author} says: {message}");
+    original.maxChars = 90;
+    original.userCooldownSec = 15;
+    original.globalCooldownSec = 7;
+    original.queueLimit = 40;
+    original.skipCommands = false;
+    original.commandPrefix = QStringLiteral("$");
+    original.skipBlocked = false;
+    original.stripUrls = false;
+    original.blocklist = QStringLiteral("spoiler\nsecret phrase");
+    original.speakSuperchats = false;
+    original.speakMemberships = true;
+    original.readModerators = false;
+    original.autoConnect = true;
+
+    QString error;
+    QVERIFY2(original.saveToFile(path, &error), qPrintable(error));
+    const Settings restored = Settings::loadFromFile(path, &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+
+    QCOMPARE(restored.provider, original.provider);
+    QCOMPARE(restored.apiKey, original.apiKey);
+    QCOMPARE(restored.videoUrl, original.videoUrl);
+    QCOMPARE(restored.voice, original.voice);
+    QCOMPARE(restored.rate, original.rate);
+    QCOMPARE(restored.pitch, original.pitch);
+    QCOMPARE(restored.amplitude, original.amplitude);
+    QCOMPARE(restored.volume, original.volume);
+    QCOMPARE(restored.readAuthor, original.readAuthor);
+    QCOMPARE(restored.authorTemplate, original.authorTemplate);
+    QCOMPARE(restored.maxChars, original.maxChars);
+    QCOMPARE(restored.userCooldownSec, original.userCooldownSec);
+    QCOMPARE(restored.globalCooldownSec, original.globalCooldownSec);
+    QCOMPARE(restored.queueLimit, original.queueLimit);
+    QCOMPARE(restored.skipCommands, original.skipCommands);
+    QCOMPARE(restored.commandPrefix, original.commandPrefix);
+    QCOMPARE(restored.stripUrls, original.stripUrls);
+    QCOMPARE(restored.skipBlocked, original.skipBlocked);
+    QCOMPARE(restored.blocklist, original.blocklist);
+    QCOMPARE(restored.speakSuperchats, original.speakSuperchats);
+    QCOMPARE(restored.speakMemberships, original.speakMemberships);
+    QCOMPARE(restored.readModerators, original.readModerators);
+    QCOMPARE(restored.autoConnect, original.autoConnect);
 }
 
 void TestSettings::loadsDefaultsForMissingFile()
@@ -167,6 +234,8 @@ void TestSettings::clampsInvalidValues()
     obs_data_set_int(data, "pitch", -1);
     obs_data_set_int(data, "amplitude", 999);
     obs_data_set_double(data, "volume", 5.0);
+    obs_data_set_int(data, "userCooldownSec", -5);
+    obs_data_set_int(data, "globalCooldownSec", 9999);
 
     const Settings settings = Settings::fromObsData(data);
     obs_data_release(data);
@@ -177,6 +246,21 @@ void TestSettings::clampsInvalidValues()
     QCOMPARE(settings.pitch, 0);
     QCOMPARE(settings.amplitude, 200);
     QCOMPARE(settings.volume, 1.5);
+    QCOMPARE(settings.userCooldownSec, 0);
+    QCOMPARE(settings.globalCooldownSec, 60);
+}
+
+void TestSettings::acceptsCooldownBoundaries()
+{
+    obs_data_t *data = obs_data_create();
+    obs_data_set_int(data, "userCooldownSec", 3600);
+    obs_data_set_int(data, "globalCooldownSec", 0);
+
+    const Settings settings = Settings::fromObsData(data);
+    obs_data_release(data);
+
+    QCOMPARE(settings.userCooldownSec, 3600);
+    QCOMPARE(settings.globalCooldownSec, 0);
 }
 
 QTEST_GUILESS_MAIN(TestSettings)

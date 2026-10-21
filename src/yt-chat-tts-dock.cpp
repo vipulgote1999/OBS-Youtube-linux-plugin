@@ -1,15 +1,19 @@
 #include "yt-chat-tts-dock.hpp"
 
 #include "audio-source.hpp"
-#include "paths.hpp"
 #include "plugin-context.hpp"
 
+#include <obs-module.h>
+
+#include <QDesktopServices>
+#include <QListWidget>
 #include <QMessageBox>
+#include <QSlider>
 #include <QTimer>
+#include <QUrl>
 
 #include <QtWidgets/QCheckBox>
 #include <QtWidgets/QComboBox>
-#include <QtWidgets/QDoubleSpinBox>
 #include <QtWidgets/QFormLayout>
 #include <QtWidgets/QGroupBox>
 #include <QtWidgets/QHBoxLayout>
@@ -21,72 +25,314 @@
 #include <QtWidgets/QSpinBox>
 #include <QtWidgets/QVBoxLayout>
 
+#include <algorithm>
+
+namespace {
+
+constexpr char kApiKeyUrl[] = "https://console.cloud.google.com/apis/credentials";
+constexpr int kQueuePreviewCount = 5;
+constexpr int kLogLineLimit = 500;
+constexpr int kSaveDebounceMs = 500;
+constexpr int kRefreshIntervalMs = 500;
+constexpr int kEngineApplyDebounceMs = 250;
+
+const QString kStatusIdleColor = QStringLiteral("#888888");
+const QString kStatusBusyColor = QStringLiteral("#d08b00");
+const QString kStatusOkColor = QStringLiteral("#2e9e44");
+const QString kStatusErrorColor = QStringLiteral("#c0392b");
+
+/* obs_module_text() returns the lookup key when a translation is missing.
+ * The dock wants plain English in that case, including on a host build where
+ * the module locale was not loaded. */
+QString uiText(const char *key, const char *fallback)
+{
+    const char *translated = obs_module_text(key);
+    if (!translated || !*translated || QLatin1String(translated) == QLatin1String(key))
+        return QString::fromUtf8(fallback);
+    return QString::fromUtf8(translated);
+}
+
+QString uiTextf(const char *key, const char *fallback, const QString &value)
+{
+    return uiText(key, fallback).arg(value);
+}
+
+/* The helper reports "official" or "innertube (experimental)" after connecting;
+ * the status detail stays short and provider-focused. */
+QString providerLabel(const QString &detail)
+{
+    const QString trimmed = detail.trimmed();
+    if (trimmed.startsWith(QLatin1String("innertube")))
+        return QStringLiteral("innertube");
+    return trimmed;
+}
+
+/* Helper errors arrive as "<code>: <human readable detail>" from
+ * PluginContext::statusChanged().  Only the documented helper codes are
+ * mapped; unknown details pass through unchanged. */
+QString mapHelperError(const QString &detail)
+{
+    const int separator = detail.indexOf(QStringLiteral(": "));
+    const QString code = separator > 0 ? detail.left(separator) : detail;
+
+    if (code == QLatin1String("auth"))
+        return uiText("Error.Auth", "API key rejected; check the key and API restrictions");
+    if (code == QLatin1String("quota"))
+        return uiText("Error.Quota",
+                      "YouTube quota exceeded; try No-key or wait until midnight PT");
+    if (code == QLatin1String("not_live"))
+        return uiText("Error.NotLive", "No active live stream found");
+    if (code == QLatin1String("chat_disabled"))
+        return uiText("Error.ChatDisabled", "Live chat is disabled for this stream");
+    if (code == QLatin1String("network"))
+        return uiText("Error.Network", "Network error; retrying");
+    if (code == QLatin1String("parse"))
+        return uiText("Error.Parse", "YouTube response changed; try the other provider");
+    return detail;
+}
+
+} // namespace
+
 YtChatTtsDock::YtChatTtsDock(PluginContext *context, QWidget *parent)
-    : QWidget(parent), context_(context), saveTimer_(new QTimer(this))
+    : QWidget(parent), context_(context), saveTimer_(new QTimer(this)),
+      refreshTimer_(new QTimer(this)), liveApplyTimer_(new QTimer(this))
 {
     saveTimer_->setSingleShot(true);
-    saveTimer_->setInterval(500);
-    connect(saveTimer_, &QTimer::timeout, this, &YtChatTtsDock::saveSettings);
+    saveTimer_->setInterval(kSaveDebounceMs);
+    connect(saveTimer_, &QTimer::timeout, this, [this]() { saveSettings(); });
 
-    auto *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(4, 4, 4, 4);
+    /* Worker pops do not emit queueChanged, and sources can be added or
+     * removed outside the dock, so a periodic refresh keeps both labels
+     * honest without polling at an aggressive interval. */
+    refreshTimer_->setInterval(kRefreshIntervalMs);
+    connect(refreshTimer_, &QTimer::timeout, this, &YtChatTtsDock::refreshStatuses);
+    refreshTimer_->start();
 
-    auto *settingsWidget = new QWidget;
+    /* Slider drags emit many values; coalesce engine restarts instead of
+     * stopping/starting espeak-ng on every tick. */
+    liveApplyTimer_->setSingleShot(true);
+    liveApplyTimer_->setInterval(kEngineApplyDebounceMs);
+    connect(liveApplyTimer_, &QTimer::timeout, this, &YtChatTtsDock::applyLiveSettingsNow);
+
+    auto *rootLayout = new QVBoxLayout(this);
+    rootLayout->setContentsMargins(4, 4, 4, 4);
+
+    auto *scroll = new QScrollArea(this);
+    scroll->setWidgetResizable(true);
+    auto *settingsWidget = new QWidget(scroll);
     auto *settingsLayout = new QVBoxLayout(settingsWidget);
     settingsLayout->setContentsMargins(0, 0, 0, 0);
 
-    auto *connectionGroup = new QGroupBox(QStringLiteral("Connection"), settingsWidget);
+    const auto addSliderRow = [](QFormLayout *form, const QString &label, QSlider *slider,
+                                 QLabel *valueLabel) {
+        auto *row = new QWidget(form->parentWidget());
+        auto *rowLayout = new QHBoxLayout(row);
+        rowLayout->setContentsMargins(0, 0, 0, 0);
+        slider->setOrientation(Qt::Horizontal);
+        rowLayout->addWidget(slider, 1);
+        valueLabel->setMinimumWidth(64);
+        valueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        rowLayout->addWidget(valueLabel);
+        form->addRow(label, row);
+    };
+
+    /* ---------------------------------------------------------------- */
+    /* Connection                                                       */
+    /* ---------------------------------------------------------------- */
+    auto *connectionGroup =
+        new QGroupBox(uiText("Connection.Group", "Connection"), settingsWidget);
     auto *connectionForm = new QFormLayout(connectionGroup);
 
     urlEdit_ = new QLineEdit(connectionGroup);
-    urlEdit_->setPlaceholderText(QStringLiteral("YouTube video URL or ID"));
-    connectionForm->addRow(QStringLiteral("Video"), urlEdit_);
+    urlEdit_->setPlaceholderText(
+        uiText("Connection.VideoPlaceholder", "YouTube video URL or ID"));
+    connectionForm->addRow(uiText("Connection.Video", "Video"), urlEdit_);
 
     apiKeyEdit_ = new QLineEdit(connectionGroup);
     apiKeyEdit_->setEchoMode(QLineEdit::Password);
-    apiKeyEdit_->setPlaceholderText(QStringLiteral("Optional API key"));
-    connectionForm->addRow(QStringLiteral("API key"), apiKeyEdit_);
+    apiKeyEdit_->setPlaceholderText(
+        uiText("Connection.ApiKeyPlaceholder", "Optional API key"));
+    connectionForm->addRow(uiText("Connection.ApiKey", "API key"), apiKeyEdit_);
 
     providerCombo_ = new QComboBox(connectionGroup);
-    providerCombo_->addItem(QStringLiteral("Auto"), QStringLiteral("auto"));
-    providerCombo_->addItem(QStringLiteral("Official API"), QStringLiteral("official"));
-    providerCombo_->addItem(QStringLiteral("No-key (experimental)"), QStringLiteral("innertube"));
-    connectionForm->addRow(QStringLiteral("Provider"), providerCombo_);
+    providerCombo_->addItem(uiText("Connection.ProviderAuto", "Auto"),
+                            QStringLiteral("auto"));
+    providerCombo_->addItem(uiText("Connection.ProviderOfficial", "Official API"),
+                            QStringLiteral("official"));
+    providerCombo_->addItem(
+        uiText("Connection.ProviderInnertube", "No-key (experimental)"),
+        QStringLiteral("innertube"));
+    connectionForm->addRow(uiText("Connection.Provider", "Provider"), providerCombo_);
+
+    apiKeyLink_ = new QLabel(connectionGroup);
+    apiKeyLink_->setTextFormat(Qt::RichText);
+    apiKeyLink_->setTextInteractionFlags(Qt::TextBrowserInteraction);
+    apiKeyLink_->setOpenExternalLinks(false);
+    apiKeyLink_->setText(
+        QStringLiteral("<a href=\"%1\">%2</a>")
+            .arg(QString::fromLatin1(kApiKeyUrl), uiText("Connection.GetApiKey", "Get an API key")));
+    apiKeyLink_->setToolTip(uiText("Connection.GetApiKeyTooltip",
+                                   "Open the Google Cloud API credentials page"));
+    connectionForm->addRow(apiKeyLink_);
+
+    auto *connectionButtons = new QHBoxLayout;
+    connectButton_ = new QPushButton(uiText("Connection.Connect", "Connect"), connectionGroup);
+    connectionButtons->addWidget(connectButton_);
+    connectionButtons->addStretch(1);
+    connectionForm->addRow(connectionButtons);
+
+    autoConnectCheck_ =
+        new QCheckBox(uiText("Connection.AutoConnect", "Connect automatically"), connectionGroup);
+    autoConnectCheck_->setToolTip(uiText(
+        "Connection.AutoConnectTooltip",
+        "Connect on OBS startup when a video URL or ID is already saved."));
+    connectionForm->addRow(autoConnectCheck_);
+
+    auto *statusRow = new QHBoxLayout;
+    statusDot_ = new QLabel(QStringLiteral("●"), connectionGroup);
+    statusDot_->setStyleSheet(QStringLiteral("color: %1;").arg(kStatusIdleColor));
+    statusRow->addWidget(statusDot_);
+    statusLabel_ =
+        new QLabel(uiText("Connection.StatusNotConnected", "Not connected"), connectionGroup);
+    statusLabel_->setWordWrap(true);
+    statusRow->addWidget(statusLabel_, 1);
+    connectionForm->addRow(statusRow);
+
     settingsLayout->addWidget(connectionGroup);
 
-    auto *voiceGroup = new QGroupBox(QStringLiteral("Voice"), settingsWidget);
+    /* ---------------------------------------------------------------- */
+    /* Voice                                                            */
+    /* ---------------------------------------------------------------- */
+    auto *voiceGroup = new QGroupBox(uiText("Voice.Group", "Voice"), settingsWidget);
     auto *voiceForm = new QFormLayout(voiceGroup);
 
-    voiceEdit_ = new QLineEdit(voiceGroup);
-    voiceEdit_->setPlaceholderText(QStringLiteral("espeak-ng voice, e.g. en-us"));
-    voiceForm->addRow(QStringLiteral("Voice"), voiceEdit_);
+    voiceCombo_ = new QComboBox(voiceGroup);
+    voiceCombo_->setEditable(true);
+    voiceCombo_->setInsertPolicy(QComboBox::NoInsert);
+    voiceCombo_->addItems({QStringLiteral("en-us"), QStringLiteral("en-gb"),
+                           QStringLiteral("en-in"), QStringLiteral("en-gb-scotland"),
+                           QStringLiteral("en-029")});
+    voiceCombo_->lineEdit()->setPlaceholderText(
+        uiText("Voice.VoicePlaceholder", "espeak-ng voice, e.g. en-us"));
+    voiceForm->addRow(uiText("Voice.Voice", "Voice"), voiceCombo_);
 
-    rateSpin_ = new QSpinBox(voiceGroup);
-    rateSpin_->setRange(80, 450);
-    rateSpin_->setSuffix(QStringLiteral(" wpm"));
-    voiceForm->addRow(QStringLiteral("Rate"), rateSpin_);
+    rateSlider_ = new QSlider(Qt::Horizontal, voiceGroup);
+    rateSlider_->setRange(80, 450);
+    rateValueLabel_ = new QLabel(voiceGroup);
+    addSliderRow(voiceForm, uiText("Voice.Rate", "Rate"), rateSlider_, rateValueLabel_);
 
-    pitchSpin_ = new QSpinBox(voiceGroup);
-    pitchSpin_->setRange(0, 200);
-    voiceForm->addRow(QStringLiteral("Pitch"), pitchSpin_);
+    pitchSlider_ = new QSlider(Qt::Horizontal, voiceGroup);
+    pitchSlider_->setRange(0, 200);
+    pitchValueLabel_ = new QLabel(voiceGroup);
+    addSliderRow(voiceForm, uiText("Voice.Pitch", "Pitch"), pitchSlider_, pitchValueLabel_);
 
-    volumeSpin_ = new QDoubleSpinBox(voiceGroup);
-    volumeSpin_->setRange(0.0, 1.5);
-    volumeSpin_->setSingleStep(0.05);
-    volumeSpin_->setDecimals(2);
-    voiceForm->addRow(QStringLiteral("Volume"), volumeSpin_);
+    amplitudeSlider_ = new QSlider(Qt::Horizontal, voiceGroup);
+    amplitudeSlider_->setRange(0, 200);
+    amplitudeValueLabel_ = new QLabel(voiceGroup);
+    addSliderRow(voiceForm, uiText("Voice.Amplitude", "Amplitude"), amplitudeSlider_,
+                 amplitudeValueLabel_);
 
-    maxCharsSpin_ = new QSpinBox(voiceGroup);
-    maxCharsSpin_->setRange(1, 500);
-    maxCharsSpin_->setSuffix(QStringLiteral(" chars"));
-    voiceForm->addRow(QStringLiteral("Max length"), maxCharsSpin_);
+    volumeSlider_ = new QSlider(Qt::Horizontal, voiceGroup);
+    /* Volume is 0.00-1.50 in the settings; the slider works in hundredths. */
+    volumeSlider_->setRange(0, 150);
+    volumeSlider_->setSingleStep(5);
+    volumeValueLabel_ = new QLabel(voiceGroup);
+    addSliderRow(voiceForm, uiText("Voice.Volume", "Volume"), volumeSlider_, volumeValueLabel_);
+
+    readAuthorCheck_ =
+        new QCheckBox(uiText("Voice.ReadAuthor", "Read the author name"), voiceGroup);
+    voiceForm->addRow(readAuthorCheck_);
+
+    authorTemplateEdit_ = new QLineEdit(voiceGroup);
+    authorTemplateEdit_->setPlaceholderText(
+        uiText("Voice.TemplatePlaceholder", "{author} says: {message}"));
+    voiceForm->addRow(uiText("Voice.Template", "Template"), authorTemplateEdit_);
+
+    testVoiceButton_ = new QPushButton(uiText("Voice.Test", "Test Voice"), voiceGroup);
+    testVoiceButton_->setToolTip(
+        uiText("Voice.TestTooltip", "Speak a test sentence through the TTS audio source."));
+    voiceForm->addRow(testVoiceButton_);
+
     settingsLayout->addWidget(voiceGroup);
 
-    auto *audioGroup = new QGroupBox(QStringLiteral("Audio output"), settingsWidget);
+    /* ---------------------------------------------------------------- */
+    /* Filtering                                                        */
+    /* ---------------------------------------------------------------- */
+    auto *filterGroup = new QGroupBox(uiText("Filtering.Group", "Filtering"), settingsWidget);
+    auto *filterForm = new QFormLayout(filterGroup);
+
+    maxCharsSpin_ = new QSpinBox(filterGroup);
+    maxCharsSpin_->setRange(1, 500);
+    maxCharsSpin_->setSuffix(QStringLiteral(" ") +
+                             uiText("Filtering.CharsSuffix", "chars"));
+    filterForm->addRow(uiText("Filtering.MaxChars", "Max length"), maxCharsSpin_);
+
+    userCooldownSpin_ = new QSpinBox(filterGroup);
+    userCooldownSpin_->setRange(0, 3600);
+    userCooldownSpin_->setSuffix(QStringLiteral(" ") +
+                                 uiText("Filtering.SecondsSuffix", "s"));
+    filterForm->addRow(uiText("Filtering.UserCooldown", "Per-user cooldown"),
+                       userCooldownSpin_);
+
+    globalCooldownSpin_ = new QSpinBox(filterGroup);
+    globalCooldownSpin_->setRange(0, 60);
+    globalCooldownSpin_->setSuffix(QStringLiteral(" ") +
+                                   uiText("Filtering.SecondsSuffix", "s"));
+    filterForm->addRow(uiText("Filtering.GlobalCooldown", "Global cooldown"),
+                       globalCooldownSpin_);
+
+    queueLimitSpin_ = new QSpinBox(filterGroup);
+    queueLimitSpin_->setRange(1, 100);
+    filterForm->addRow(uiText("Filtering.QueueLimit", "Queue limit"), queueLimitSpin_);
+
+    commandPrefixEdit_ = new QLineEdit(filterGroup);
+    commandPrefixEdit_->setPlaceholderText(
+        uiText("Filtering.CommandPrefixPlaceholder", "!"));
+    filterForm->addRow(uiText("Filtering.CommandPrefix", "Command prefix"),
+                       commandPrefixEdit_);
+
+    skipCommandsCheck_ =
+        new QCheckBox(uiText("Filtering.SkipCommands", "Skip commands"), filterGroup);
+    filterForm->addRow(skipCommandsCheck_);
+
+    stripUrlsCheck_ = new QCheckBox(uiText("Filtering.StripUrls", "Strip URLs"), filterGroup);
+    filterForm->addRow(stripUrlsCheck_);
+
+    skipBlockedCheck_ =
+        new QCheckBox(uiText("Filtering.SkipBlocked", "Skip blocked phrases"), filterGroup);
+    filterForm->addRow(skipBlockedCheck_);
+
+    blocklistEdit_ = new QPlainTextEdit(filterGroup);
+    blocklistEdit_->setPlaceholderText(
+        uiText("Filtering.BlocklistPlaceholder", "One phrase per line"));
+    blocklistEdit_->setMaximumHeight(70);
+    filterForm->addRow(uiText("Filtering.Blocklist", "Blocklist"), blocklistEdit_);
+
+    speakSuperchatsCheck_ =
+        new QCheckBox(uiText("Filtering.SpeakSuperchats", "Read Super Chats"), filterGroup);
+    filterForm->addRow(speakSuperchatsCheck_);
+
+    speakMembershipsCheck_ =
+        new QCheckBox(uiText("Filtering.SpeakMemberships", "Read new members"), filterGroup);
+    filterForm->addRow(speakMembershipsCheck_);
+
+    readModeratorsCheck_ =
+        new QCheckBox(uiText("Filtering.ReadModerators", "Read moderators"), filterGroup);
+    filterForm->addRow(readModeratorsCheck_);
+
+    settingsLayout->addWidget(filterGroup);
+
+    /* ---------------------------------------------------------------- */
+    /* Audio source                                                     */
+    /* ---------------------------------------------------------------- */
+    auto *audioGroup = new QGroupBox(uiText("Audio.Group", "Audio source"), settingsWidget);
     auto *audioLayout = new QVBoxLayout(audioGroup);
 
-    addSourceButton_ = new QPushButton(QStringLiteral("Add TTS source to current scene"), audioGroup);
-    addSourceAllButton_ = new QPushButton(QStringLiteral("Add to all scenes"), audioGroup);
+    addSourceButton_ =
+        new QPushButton(uiText("Audio.AddCurrent", "Add TTS source to current scene"),
+                        audioGroup);
+    addSourceAllButton_ =
+        new QPushButton(uiText("Audio.AddAll", "Add to all scenes"), audioGroup);
     auto *audioButtonRow = new QHBoxLayout;
     audioButtonRow->addWidget(addSourceButton_);
     audioButtonRow->addWidget(addSourceAllButton_);
@@ -98,155 +344,142 @@ YtChatTtsDock::YtChatTtsDock(PluginContext *context, QWidget *parent)
     audioLayout->addWidget(sourceStatusLabel_);
     settingsLayout->addWidget(audioGroup);
 
-    auto *filterGroup = new QGroupBox(QStringLiteral("Filtering"), settingsWidget);
-    auto *filterForm = new QFormLayout(filterGroup);
-
-    userCooldownSpin_ = new QSpinBox(filterGroup);
-    userCooldownSpin_->setRange(0, 3600);
-    userCooldownSpin_->setSuffix(QStringLiteral(" s"));
-    filterForm->addRow(QStringLiteral("Per-user cooldown"), userCooldownSpin_);
-
-    globalCooldownSpin_ = new QSpinBox(filterGroup);
-    globalCooldownSpin_->setRange(0, 60);
-    globalCooldownSpin_->setSuffix(QStringLiteral(" s"));
-    filterForm->addRow(QStringLiteral("Global cooldown"), globalCooldownSpin_);
-
-    queueLimitSpin_ = new QSpinBox(filterGroup);
-    queueLimitSpin_->setRange(1, 100);
-    filterForm->addRow(QStringLiteral("Queue limit"), queueLimitSpin_);
-
-    commandPrefixEdit_ = new QLineEdit(filterGroup);
-    commandPrefixEdit_->setPlaceholderText(QStringLiteral("!"));
-    filterForm->addRow(QStringLiteral("Command prefix"), commandPrefixEdit_);
-
-    skipCommandsCheck_ = new QCheckBox(QStringLiteral("Skip commands"), filterGroup);
-    filterForm->addRow(skipCommandsCheck_);
-
-    stripUrlsCheck_ = new QCheckBox(QStringLiteral("Strip URLs"), filterGroup);
-    filterForm->addRow(stripUrlsCheck_);
-
-    skipBlockedCheck_ = new QCheckBox(QStringLiteral("Skip blocked phrases"), filterGroup);
-    filterForm->addRow(skipBlockedCheck_);
-
-    blocklistEdit_ = new QPlainTextEdit(filterGroup);
-    blocklistEdit_->setPlaceholderText(QStringLiteral("One phrase per line"));
-    blocklistEdit_->setMaximumHeight(70);
-    filterForm->addRow(QStringLiteral("Blocklist"), blocklistEdit_);
-    settingsLayout->addWidget(filterGroup);
-
-    auto *messageGroup = new QGroupBox(QStringLiteral("Messages"), settingsWidget);
-    auto *messageForm = new QFormLayout(messageGroup);
-
-    readAuthorCheck_ = new QCheckBox(QStringLiteral("Read the author name"), messageGroup);
-    messageForm->addRow(readAuthorCheck_);
-
-    authorTemplateEdit_ = new QLineEdit(messageGroup);
-    authorTemplateEdit_->setPlaceholderText(QStringLiteral("{author} says: {message}"));
-    messageForm->addRow(QStringLiteral("Template"), authorTemplateEdit_);
-
-    speakSuperchatsCheck_ = new QCheckBox(QStringLiteral("Read Super Chats"), messageGroup);
-    messageForm->addRow(speakSuperchatsCheck_);
-
-    speakMembershipsCheck_ = new QCheckBox(QStringLiteral("Read new members"), messageGroup);
-    messageForm->addRow(speakMembershipsCheck_);
-
-    readModeratorsCheck_ = new QCheckBox(QStringLiteral("Read moderators"), messageGroup);
-    messageForm->addRow(readModeratorsCheck_);
-    settingsLayout->addWidget(messageGroup);
-
     settingsLayout->addStretch(1);
-
-    auto *scroll = new QScrollArea(this);
-    scroll->setWidgetResizable(true);
     scroll->setWidget(settingsWidget);
     scroll->setMinimumHeight(220);
-    layout->addWidget(scroll, 1);
+    rootLayout->addWidget(scroll, 3);
 
-    auto *connectionButtons = new QHBoxLayout;
-    connectButton_ = new QPushButton(QStringLiteral("Connect"), this);
-    saveButton_ = new QPushButton(QStringLiteral("Save"), this);
-    connectionButtons->addWidget(connectButton_);
-    connectionButtons->addWidget(saveButton_);
-    connectionButtons->addStretch(1);
-    layout->addLayout(connectionButtons);
+    /* ---------------------------------------------------------------- */
+    /* Queue                                                            */
+    /* ---------------------------------------------------------------- */
+    auto *queueGroup = new QGroupBox(uiText("Queue.Group", "Queue"), this);
+    auto *queueLayout = new QVBoxLayout(queueGroup);
 
-    auto *speechButtons = new QHBoxLayout;
-    testVoiceButton_ = new QPushButton(QStringLiteral("Test Voice"), this);
-    testVoiceButton_->setToolTip(
-        QStringLiteral("Speak a test sentence through the TTS audio source."));
-    skipButton_ = new QPushButton(QStringLiteral("Skip Current"), this);
+    queueLabel_ = new QLabel(uiTextf("Queue.Count", "Queue: %1", QStringLiteral("0")),
+                             queueGroup);
+    queueLayout->addWidget(queueLabel_);
+
+    queueList_ = new QListWidget(queueGroup);
+    queueList_->setMaximumHeight(110);
+    queueList_->setSelectionMode(QAbstractItemView::NoSelection);
+    queueList_->setFocusPolicy(Qt::NoFocus);
+    queueLayout->addWidget(queueList_);
+
+    auto *queueButtons = new QHBoxLayout;
+    skipButton_ = new QPushButton(uiText("Queue.Skip", "Skip Current"), queueGroup);
     skipButton_->setToolTip(
-        QStringLiteral("Stops queued messages; the current message may finish."));
-    clearQueueButton_ = new QPushButton(QStringLiteral("Clear Queue"), this);
-    clearQueueButton_->setToolTip(QStringLiteral("Removes every queued message."));
-    speechButtons->addWidget(testVoiceButton_);
-    speechButtons->addWidget(skipButton_);
-    speechButtons->addWidget(clearQueueButton_);
-    speechButtons->addStretch(1);
-    layout->addLayout(speechButtons);
+        uiText("Queue.SkipTooltip", "Stops queued messages; the current message may finish."));
+    clearQueueButton_ = new QPushButton(uiText("Queue.Clear", "Clear Queue"), queueGroup);
+    clearQueueButton_->setToolTip(
+        uiText("Queue.ClearTooltip", "Removes every queued message."));
+    queueButtons->addWidget(skipButton_);
+    queueButtons->addWidget(clearQueueButton_);
+    queueButtons->addStretch(1);
+    queueLayout->addLayout(queueButtons);
 
-    statusLabel_ = new QLabel(QStringLiteral("Not connected"), this);
-    statusLabel_->setAlignment(Qt::AlignCenter);
-    statusLabel_->setWordWrap(true);
-    layout->addWidget(statusLabel_);
+    rootLayout->addWidget(queueGroup);
 
-    queueLabel_ = new QLabel(QStringLiteral("Queue: 0"), this);
-    layout->addWidget(queueLabel_);
+    /* ---------------------------------------------------------------- */
+    /* Log                                                              */
+    /* ---------------------------------------------------------------- */
+    auto *logGroup = new QGroupBox(uiText("Log.Group", "Log"), this);
+    auto *logLayout = new QVBoxLayout(logGroup);
 
-    logView_ = new QPlainTextEdit(this);
+    auto *logHeader = new QHBoxLayout;
+    clearLogButton_ = new QPushButton(uiText("Log.Clear", "Clear Log"), logGroup);
+    logHeader->addStretch(1);
+    logHeader->addWidget(clearLogButton_);
+    logLayout->addLayout(logHeader);
+
+    logView_ = new QPlainTextEdit(logGroup);
     logView_->setReadOnly(true);
-    logView_->setMaximumBlockCount(1000);
-    layout->addWidget(logView_, 1);
+    logView_->setMaximumBlockCount(kLogLineLimit);
+    logView_->setMinimumHeight(100);
+    logLayout->addWidget(logView_, 1);
+    rootLayout->addWidget(logGroup, 2);
 
+    /* Seed the controls before wiring signals so loading saved values cannot
+     * schedule a save or a worker restart. */
     applySettingsToControls();
+    updateValueLabels();
     updateSourceStatus();
+    refreshQueue();
 
     connect(connectButton_, &QPushButton::clicked, this, &YtChatTtsDock::onConnectClicked);
-    connect(saveButton_, &QPushButton::clicked, this, &YtChatTtsDock::onSaveClicked);
-    connect(testVoiceButton_, &QPushButton::clicked, this, &YtChatTtsDock::onTestVoiceClicked);
+    connect(testVoiceButton_, &QPushButton::clicked, this,
+            &YtChatTtsDock::onTestVoiceClicked);
     connect(skipButton_, &QPushButton::clicked, this, &YtChatTtsDock::onSkipClicked);
-    connect(clearQueueButton_, &QPushButton::clicked, this, &YtChatTtsDock::onClearQueueClicked);
+    connect(clearQueueButton_, &QPushButton::clicked, this,
+            &YtChatTtsDock::onClearQueueClicked);
     connect(addSourceButton_, &QPushButton::clicked, this,
             [this]() { onAddSourceClicked(false); });
     connect(addSourceAllButton_, &QPushButton::clicked, this,
             [this]() { onAddSourceClicked(true); });
+    connect(clearLogButton_, &QPushButton::clicked, this, [this]() { logView_->clear(); });
+    connect(apiKeyLink_, &QLabel::linkActivated, this, [](const QString &url) {
+        QDesktopServices::openUrl(QUrl(url));
+    });
 
     if (context_) {
-        connect(context_, &PluginContext::statusChanged, this, &YtChatTtsDock::onStatusChanged);
+        connect(context_, &PluginContext::statusChanged, this,
+                &YtChatTtsDock::onStatusChanged);
         connect(context_, &PluginContext::logLine, this, &YtChatTtsDock::onLogLine);
-        connect(context_, &PluginContext::queueChanged, this, &YtChatTtsDock::onQueueChanged);
+        connect(context_, &PluginContext::queueChanged, this,
+                &YtChatTtsDock::onQueueChanged);
         /* Plugin unload deletes the dock before the context; this guards the
          * opposite order (frontend teardown) against a dangling pointer. */
         connect(context_, &QObject::destroyed, this, [this]() { context_ = nullptr; });
     }
 
-    connect(urlEdit_, &QLineEdit::textChanged, this, &YtChatTtsDock::scheduleSave);
-    connect(apiKeyEdit_, &QLineEdit::textChanged, this, &YtChatTtsDock::scheduleSave);
-    connect(providerCombo_, &QComboBox::currentIndexChanged, this, &YtChatTtsDock::scheduleSave);
-    connect(voiceEdit_, &QLineEdit::textChanged, this, &YtChatTtsDock::scheduleSave);
-    connect(rateSpin_, &QSpinBox::valueChanged, this, &YtChatTtsDock::scheduleSave);
-    connect(pitchSpin_, &QSpinBox::valueChanged, this, &YtChatTtsDock::scheduleSave);
-    connect(volumeSpin_, &QDoubleSpinBox::valueChanged, this, &YtChatTtsDock::scheduleSave);
-    connect(maxCharsSpin_, &QSpinBox::valueChanged, this, &YtChatTtsDock::scheduleSave);
-    connect(userCooldownSpin_, &QSpinBox::valueChanged, this, &YtChatTtsDock::scheduleSave);
-    connect(globalCooldownSpin_, &QSpinBox::valueChanged, this, &YtChatTtsDock::scheduleSave);
-    connect(queueLimitSpin_, &QSpinBox::valueChanged, this, &YtChatTtsDock::scheduleSave);
-    connect(commandPrefixEdit_, &QLineEdit::textChanged, this, &YtChatTtsDock::scheduleSave);
-    connect(skipCommandsCheck_, &QCheckBox::toggled, this, &YtChatTtsDock::scheduleSave);
-    connect(stripUrlsCheck_, &QCheckBox::toggled, this, &YtChatTtsDock::scheduleSave);
-    connect(skipBlockedCheck_, &QCheckBox::toggled, this, &YtChatTtsDock::scheduleSave);
-    connect(blocklistEdit_, &QPlainTextEdit::textChanged, this, &YtChatTtsDock::scheduleSave);
-    connect(readAuthorCheck_, &QCheckBox::toggled, this, &YtChatTtsDock::scheduleSave);
-    connect(authorTemplateEdit_, &QLineEdit::textChanged, this, &YtChatTtsDock::scheduleSave);
-    connect(speakSuperchatsCheck_, &QCheckBox::toggled, this, &YtChatTtsDock::scheduleSave);
-    connect(speakMembershipsCheck_, &QCheckBox::toggled, this, &YtChatTtsDock::scheduleSave);
-    connect(readModeratorsCheck_, &QCheckBox::toggled, this, &YtChatTtsDock::scheduleSave);
+    connect(urlEdit_, &QLineEdit::textChanged, this, &YtChatTtsDock::onControlChanged);
+    connect(apiKeyEdit_, &QLineEdit::textChanged, this, &YtChatTtsDock::onControlChanged);
+    connect(providerCombo_, &QComboBox::currentIndexChanged, this,
+            &YtChatTtsDock::onControlChanged);
+    connect(voiceCombo_, &QComboBox::currentTextChanged, this,
+            &YtChatTtsDock::onControlChanged);
+    connect(rateSlider_, &QSlider::valueChanged, this, &YtChatTtsDock::onControlChanged);
+    connect(pitchSlider_, &QSlider::valueChanged, this, &YtChatTtsDock::onControlChanged);
+    connect(amplitudeSlider_, &QSlider::valueChanged, this,
+            &YtChatTtsDock::onControlChanged);
+    connect(volumeSlider_, &QSlider::valueChanged, this, &YtChatTtsDock::onControlChanged);
+    connect(readAuthorCheck_, &QCheckBox::toggled, this, &YtChatTtsDock::onControlChanged);
+    connect(authorTemplateEdit_, &QLineEdit::textChanged, this,
+            &YtChatTtsDock::onControlChanged);
+    connect(maxCharsSpin_, &QSpinBox::valueChanged, this, &YtChatTtsDock::onControlChanged);
+    connect(userCooldownSpin_, &QSpinBox::valueChanged, this,
+            &YtChatTtsDock::onControlChanged);
+    connect(globalCooldownSpin_, &QSpinBox::valueChanged, this,
+            &YtChatTtsDock::onControlChanged);
+    connect(queueLimitSpin_, &QSpinBox::valueChanged, this,
+            &YtChatTtsDock::onControlChanged);
+    connect(commandPrefixEdit_, &QLineEdit::textChanged, this,
+            &YtChatTtsDock::onControlChanged);
+    connect(skipCommandsCheck_, &QCheckBox::toggled, this,
+            &YtChatTtsDock::onControlChanged);
+    connect(stripUrlsCheck_, &QCheckBox::toggled, this, &YtChatTtsDock::onControlChanged);
+    connect(skipBlockedCheck_, &QCheckBox::toggled, this,
+            &YtChatTtsDock::onControlChanged);
+    connect(blocklistEdit_, &QPlainTextEdit::textChanged, this,
+            &YtChatTtsDock::onControlChanged);
+    connect(speakSuperchatsCheck_, &QCheckBox::toggled, this,
+            &YtChatTtsDock::onControlChanged);
+    connect(speakMembershipsCheck_, &QCheckBox::toggled, this,
+            &YtChatTtsDock::onControlChanged);
+    connect(readModeratorsCheck_, &QCheckBox::toggled, this,
+            &YtChatTtsDock::onControlChanged);
+    connect(autoConnectCheck_, &QCheckBox::toggled, this,
+            &YtChatTtsDock::onControlChanged);
+
+    /* Auto-connect must run after the dock exists so failures can be logged
+     * and surfaced without a modal dialog blocking OBS startup. */
+    QTimer::singleShot(0, this, &YtChatTtsDock::maybeAutoConnect);
 }
 
 YtChatTtsDock::~YtChatTtsDock()
 {
-    if (saveTimer_->isActive())
-        saveTimer_->stop();
+    saveTimer_->stop();
+    refreshTimer_->stop();
+    liveApplyTimer_->stop();
 
     /* Persist pending edits directly (not through saveSettings()) so teardown
      * never restarts the worker.  context_ is null if the context was already
@@ -254,7 +487,7 @@ YtChatTtsDock::~YtChatTtsDock()
     if (context_) {
         context_->settings() = settingsFromControls();
         if (!context_->settings().save())
-            appendLog(QStringLiteral("settings: save failed"));
+            blog(LOG_WARNING, "[yt-chat-tts] settings save failed during dock teardown");
     }
 }
 
@@ -267,10 +500,13 @@ void YtChatTtsDock::applySettingsToControls()
     apiKeyEdit_->setText(settings.apiKey);
     const int providerIndex = providerCombo_->findData(settings.provider);
     providerCombo_->setCurrentIndex(providerIndex < 0 ? 0 : providerIndex);
-    voiceEdit_->setText(settings.voice);
-    rateSpin_->setValue(settings.rate);
-    pitchSpin_->setValue(settings.pitch);
-    volumeSpin_->setValue(settings.volume);
+    voiceCombo_->setCurrentText(settings.voice);
+    rateSlider_->setValue(settings.rate);
+    pitchSlider_->setValue(settings.pitch);
+    amplitudeSlider_->setValue(settings.amplitude);
+    volumeSlider_->setValue(qRound(settings.volume * 100.0));
+    readAuthorCheck_->setChecked(settings.readAuthor);
+    authorTemplateEdit_->setText(settings.authorTemplate);
     maxCharsSpin_->setValue(settings.maxChars);
     userCooldownSpin_->setValue(settings.userCooldownSec);
     globalCooldownSpin_->setValue(settings.globalCooldownSec);
@@ -280,27 +516,28 @@ void YtChatTtsDock::applySettingsToControls()
     stripUrlsCheck_->setChecked(settings.stripUrls);
     skipBlockedCheck_->setChecked(settings.skipBlocked);
     blocklistEdit_->setPlainText(settings.blocklist);
-    readAuthorCheck_->setChecked(settings.readAuthor);
-    authorTemplateEdit_->setText(settings.authorTemplate);
     speakSuperchatsCheck_->setChecked(settings.speakSuperchats);
     speakMembershipsCheck_->setChecked(settings.speakMemberships);
     readModeratorsCheck_->setChecked(settings.readModerators);
+    autoConnectCheck_->setChecked(settings.autoConnect);
 
     loading_ = false;
 }
 
 Settings YtChatTtsDock::settingsFromControls() const
 {
-    /* Preserve fields without a control yet (amplitude, auto-connect, explicit
-     * helper/espeak paths). */
+    /* Preserve fields without a control (explicit helper/espeak paths). */
     Settings settings = context_ ? context_->settings() : Settings{};
     settings.provider = providerCombo_->currentData().toString();
     settings.apiKey = apiKeyEdit_->text();
     settings.videoUrl = urlEdit_->text().trimmed();
-    settings.voice = voiceEdit_->text();
-    settings.rate = rateSpin_->value();
-    settings.pitch = pitchSpin_->value();
-    settings.volume = volumeSpin_->value();
+    settings.voice = voiceCombo_->currentText().trimmed();
+    settings.rate = rateSlider_->value();
+    settings.pitch = pitchSlider_->value();
+    settings.amplitude = amplitudeSlider_->value();
+    settings.volume = volumeSlider_->value() / 100.0;
+    settings.readAuthor = readAuthorCheck_->isChecked();
+    settings.authorTemplate = authorTemplateEdit_->text();
     settings.maxChars = maxCharsSpin_->value();
     settings.userCooldownSec = userCooldownSpin_->value();
     settings.globalCooldownSec = globalCooldownSpin_->value();
@@ -310,11 +547,10 @@ Settings YtChatTtsDock::settingsFromControls() const
     settings.stripUrls = stripUrlsCheck_->isChecked();
     settings.skipBlocked = skipBlockedCheck_->isChecked();
     settings.blocklist = blocklistEdit_->toPlainText();
-    settings.readAuthor = readAuthorCheck_->isChecked();
-    settings.authorTemplate = authorTemplateEdit_->text();
     settings.speakSuperchats = speakSuperchatsCheck_->isChecked();
     settings.speakMemberships = speakMembershipsCheck_->isChecked();
     settings.readModerators = readModeratorsCheck_->isChecked();
+    settings.autoConnect = autoConnectCheck_->isChecked();
     return settings;
 }
 
@@ -324,20 +560,46 @@ void YtChatTtsDock::scheduleSave()
         saveTimer_->start();
 }
 
-void YtChatTtsDock::saveSettings()
+bool YtChatTtsDock::saveSettings()
+{
+    if (!context_)
+        return false;
+
+    context_->settings() = settingsFromControls();
+    /* The context logs "settings: save failed" on its own; the return value
+     * lets any later caller avoid reporting a false success. */
+    return context_->saveSettings();
+}
+
+void YtChatTtsDock::onControlChanged()
+{
+    if (loading_)
+        return;
+
+    updateValueLabels();
+
+    QObject *changed = sender();
+    const bool engineControl = changed == voiceCombo_ || changed == rateSlider_ ||
+                               changed == pitchSlider_ || changed == amplitudeSlider_;
+    if (engineControl) {
+        liveApplyTimer_->start();
+    } else {
+        applyLiveSettingsNow();
+    }
+
+    if (changed == queueLimitSpin_)
+        refreshQueue();
+
+    scheduleSave();
+}
+
+void YtChatTtsDock::applyLiveSettingsNow()
 {
     if (!context_)
         return;
 
     context_->settings() = settingsFromControls();
-    context_->saveSettings();
-}
-
-void YtChatTtsDock::onSaveClicked()
-{
-    saveTimer_->stop();
-    saveSettings();
-    appendLog(QStringLiteral("settings saved"));
+    context_->applyLiveSettings();
 }
 
 void YtChatTtsDock::onConnectClicked()
@@ -357,32 +619,35 @@ void YtChatTtsDock::onConnectClicked()
 
     const QString video = context_->settings().videoUrl.trimmed();
     if (video.isEmpty()) {
-        const QString message = QStringLiteral("Enter a YouTube video URL or ID");
+        const QString message =
+            uiText("Connection.ErrorUrlRequired", "Enter a YouTube video URL or ID");
         appendLog(QStringLiteral("error: a video URL or ID is required"));
-        statusLabel_->setText(message);
-        QMessageBox::warning(this, QStringLiteral("Connection"), message);
+        setStatus(message, kStatusErrorColor);
+        QMessageBox::warning(this, uiText("Connection.Group", "Connection"), message);
         return;
     }
 
-    context_->saveSettings();
+    saveSettings();
 
     QString error;
     if (!context_->connectChat(&error)) {
         appendLog(QStringLiteral("error: ") + error);
-        statusLabel_->setText(QStringLiteral("Not connected"));
+        setStatus(uiTextf("Connection.StatusError", "Error: %1", error), kStatusErrorColor);
         setConnected(false);
-        QMessageBox::critical(this, QStringLiteral("Connection failed"), error);
+        QMessageBox::critical(this, uiText("Connection.ErrorTitle", "Connection failed"),
+                              error);
         return;
     }
 
     setConnected(true);
-    statusLabel_->setText(QStringLiteral("Connecting…"));
+    setStatus(uiText("Connection.StatusConnecting", "Connecting…"), kStatusBusyColor);
 
     if (!context_->hasAudioSource()) {
-        const QString warning =
-            QStringLiteral("No TTS audio source is added; chat is read but audio will be silent");
+        const QString warning = uiText(
+            "Connection.WarningNoSource",
+            "No TTS audio source is added; chat is read but audio will be silent");
         appendLog(QStringLiteral("warning: ") + warning);
-        sourceStatusLabel_->setText(QStringLiteral("TTS source: not added (audio will be silent)"));
+        updateSourceStatus();
     }
 }
 
@@ -392,15 +657,15 @@ void YtChatTtsDock::onTestVoiceClicked()
         return;
 
     saveTimer_->stop();
-    context_->settings() = settingsFromControls();
-    context_->saveSettings();
+    saveSettings();
     context_->testVoice();
 
     if (!context_->hasAudioSource()) {
-        const QString warning =
-            QStringLiteral("No TTS audio source is added; test audio is buffered but silent");
+        const QString warning = uiText(
+            "Voice.WarningNoSource",
+            "No TTS audio source is added; test audio is buffered but silent");
         appendLog(QStringLiteral("warning: ") + warning);
-        sourceStatusLabel_->setText(QStringLiteral("TTS source: not added (audio will be silent)"));
+        updateSourceStatus();
     }
 }
 
@@ -410,7 +675,8 @@ void YtChatTtsDock::onSkipClicked()
         return;
 
     context_->skipCurrent();
-    appendLog(QStringLiteral("tts: skipped queued messages (current message may finish)"));
+    appendLog(uiText("Log.Skipped",
+                     "tts: skipped queued messages (current message may finish)"));
 }
 
 void YtChatTtsDock::onClearQueueClicked()
@@ -419,7 +685,8 @@ void YtChatTtsDock::onClearQueueClicked()
         return;
 
     context_->clearQueue();
-    appendLog(QStringLiteral("tts: queue cleared"));
+    appendLog(uiText("Log.QueueCleared", "tts: queue cleared"));
+    refreshQueue();
 }
 
 void YtChatTtsDock::onAddSourceClicked(bool allScenes)
@@ -427,7 +694,8 @@ void YtChatTtsDock::onAddSourceClicked(bool allScenes)
     /* Source messages belong on the source status label so they never replace
      * the chat connection state. */
     if (audio_source_exists()) {
-        const QString message = QStringLiteral("TTS source already exists; not adding another");
+        const QString message =
+            uiText("Audio.AlreadyExists", "TTS source already exists; not adding another");
         appendLog(QStringLiteral("audio: ") + message);
         sourceStatusLabel_->setText(message);
         return;
@@ -436,13 +704,14 @@ void YtChatTtsDock::onAddSourceClicked(bool allScenes)
     create_audio_source(allScenes);
 
     if (audio_source_exists()) {
-        const QString message = allScenes ? QStringLiteral("TTS source added to all scenes")
-                                          : QStringLiteral("TTS source added to the current scene");
+        const QString message =
+            allScenes ? uiText("Audio.AddedAll", "TTS source added to all scenes")
+                      : uiText("Audio.AddedCurrent", "TTS source added to the current scene");
         appendLog(QStringLiteral("audio: ") + message);
         sourceStatusLabel_->setText(message);
     } else {
-        const QString message =
-            QStringLiteral("Could not add the TTS source; open a scene and try again");
+        const QString message = uiText(
+            "Audio.AddFailed", "Could not add the TTS source; open a scene and try again");
         appendLog(QStringLiteral("audio: ") + message);
         sourceStatusLabel_->setText(message);
     }
@@ -450,41 +719,83 @@ void YtChatTtsDock::onAddSourceClicked(bool allScenes)
 
 void YtChatTtsDock::updateSourceStatus()
 {
-    sourceStatusLabel_->setText(audio_source_exists()
-                                    ? QStringLiteral("TTS source: added")
-                                    : QStringLiteral("TTS source: not added (audio will be silent)"));
+    if (!context_)
+        return;
+
+    sourceStatusLabel_->setText(
+        context_->hasAudioSource()
+            ? uiText("Audio.SourceAdded", "TTS source: added")
+            : uiText("Audio.SourceMissing",
+                     "TTS source: not added (audio will be silent)"));
+}
+
+void YtChatTtsDock::updateValueLabels()
+{
+    rateValueLabel_->setText(
+        uiTextf("Voice.RateValue", "%1 wpm", QString::number(rateSlider_->value())));
+    pitchValueLabel_->setText(QString::number(pitchSlider_->value()));
+    amplitudeValueLabel_->setText(QString::number(amplitudeSlider_->value()));
+    volumeValueLabel_->setText(
+        QString::number(volumeSlider_->value() / 100.0, 'f', 2));
 }
 
 void YtChatTtsDock::onStatusChanged(const QString &state, const QString &detail)
 {
     if (state == QLatin1String("connected")) {
-        statusLabel_->setText(QStringLiteral("Connected (") + detail + QLatin1Char(')'));
+        const QString provider = providerLabel(detail);
+        const QString text =
+            provider.isEmpty()
+                ? uiText("Connection.StatusConnected", "Connected")
+                : uiTextf("Connection.StatusConnectedProvider", "Connected (%1)", provider);
+        setStatus(text, kStatusOkColor);
         appendLog(QStringLiteral("status: connected (") + detail + QLatin1Char(')'));
         setConnected(true);
         return;
     }
 
+    if (state == QLatin1String("connecting")) {
+        const QString provider = providerLabel(detail);
+        const QString text =
+            provider.isEmpty()
+                ? uiText("Connection.StatusConnecting", "Connecting…")
+                : uiTextf("Connection.StatusConnectingProvider", "Connecting… (%1)", provider);
+        setStatus(text, kStatusBusyColor);
+        appendLog(QStringLiteral("status[connecting]: ") + detail);
+        return;
+    }
+
+    if (state == QLatin1String("reconnecting")) {
+        setStatus(uiText("Connection.StatusReconnecting", "Reconnecting…"),
+                  kStatusBusyColor);
+        appendLog(QStringLiteral("status[reconnecting]: ") + detail);
+        return;
+    }
+
     if (state == QLatin1String("ended")) {
-        statusLabel_->setText(QStringLiteral("Not connected"));
+        setStatus(uiText("Connection.StatusEnded", "Stream ended"), kStatusIdleColor);
         appendLog(QStringLiteral("status: helper ended"));
         setConnected(false);
         return;
     }
 
     if (state == QLatin1String("disconnected")) {
-        statusLabel_->setText(QStringLiteral("Not connected"));
+        setStatus(uiText("Connection.StatusNotConnected", "Not connected"),
+                  kStatusIdleColor);
         appendLog(QStringLiteral("disconnected"));
         setConnected(false);
         return;
     }
 
     if (state == QLatin1String("error")) {
-        statusLabel_->setText(QStringLiteral("Error: ") + detail);
+        const QString mapped = mapHelperError(detail);
+        setStatus(uiTextf("Connection.StatusError", "Error: %1", mapped),
+                  kStatusErrorColor);
+        appendLog(QStringLiteral("error: ") + mapped);
         setConnected(false);
         return;
     }
 
-    statusLabel_->setText(state + QStringLiteral("…"));
+    setStatus(state + QStringLiteral("…"), kStatusIdleColor);
     appendLog(QStringLiteral("status[") + state + QStringLiteral("]: ") + detail);
 }
 
@@ -495,13 +806,70 @@ void YtChatTtsDock::onLogLine(const QString &line)
 
 void YtChatTtsDock::onQueueChanged()
 {
+    refreshQueue();
+}
+
+void YtChatTtsDock::refreshQueue()
+{
+    if (!queueList_ || !queueLabel_)
+        return;
+
+    queueList_->clear();
     if (!context_) {
-        queueLabel_->setText(QStringLiteral("Queue: 0"));
+        queueLabel_->setText(uiTextf("Queue.Count", "Queue: %1", QStringLiteral("0")));
         return;
     }
 
+    const std::vector<ChatMessage> snapshot = context_->queueSnapshot(100);
+    const size_t previewCount = std::min(snapshot.size(), size_t(kQueuePreviewCount));
+    for (size_t i = 0; i < previewCount; ++i) {
+        const ChatMessage &message = snapshot[i];
+        const QString text = message.author.isEmpty()
+                                 ? message.text
+                                 : message.author + QStringLiteral(": ") + message.text;
+        auto *item = new QListWidgetItem(text, queueList_);
+        item->setToolTip(text);
+    }
+
     queueLabel_->setText(
-        QStringLiteral("Queue: %1").arg(context_->queueSnapshot(100).size()));
+        uiTextf("Queue.Count", "Queue: %1", QString::number(snapshot.size())));
+}
+
+void YtChatTtsDock::refreshStatuses()
+{
+    refreshQueue();
+    updateSourceStatus();
+}
+
+void YtChatTtsDock::maybeAutoConnect()
+{
+    if (!context_ || !autoConnectCheck_->isChecked())
+        return;
+
+    const QString video = urlEdit_->text().trimmed();
+    if (video.isEmpty())
+        return;
+
+    context_->settings() = settingsFromControls();
+
+    if (!context_->hasAudioSource()) {
+        const QString warning = uiText(
+            "Connection.WarningNoSource",
+            "No TTS audio source is added; chat is read but audio will be silent");
+        appendLog(QStringLiteral("warning: ") + warning);
+        updateSourceStatus();
+    }
+
+    QString error;
+    if (!context_->connectChat(&error)) {
+        appendLog(uiTextf("Log.AutoConnectFailed", "auto-connect failed: %1", error));
+        setStatus(uiTextf("Connection.StatusError", "Error: %1", error), kStatusErrorColor);
+        setConnected(false);
+        return;
+    }
+
+    setConnected(true);
+    setStatus(uiText("Connection.StatusConnecting", "Connecting…"), kStatusBusyColor);
 }
 
 void YtChatTtsDock::setConnected(bool connected)
@@ -510,7 +878,15 @@ void YtChatTtsDock::setConnected(bool connected)
     urlEdit_->setEnabled(!connected);
     apiKeyEdit_->setEnabled(!connected);
     providerCombo_->setEnabled(!connected);
-    connectButton_->setText(connected ? QStringLiteral("Disconnect") : QStringLiteral("Connect"));
+    connectButton_->setText(
+        connected ? uiText("Connection.Disconnect", "Disconnect")
+                  : uiText("Connection.Connect", "Connect"));
+}
+
+void YtChatTtsDock::setStatus(const QString &text, const QString &color)
+{
+    statusLabel_->setText(text);
+    statusDot_->setStyleSheet(QStringLiteral("color: %1;").arg(color));
 }
 
 void YtChatTtsDock::appendLog(const QString &line)

@@ -5,12 +5,12 @@ offline espeak-ng speech engine and mixes the synthesized speech into OBS as a
 native audio source. No cloud TTS, no Python inside OBS, no virtual audio
 cables.
 
-This is the Task 1 skeleton of the plugin: a C++17/Qt6 OBS module is built
-inside the `org.freedesktop.Sdk//25.08` Flatpak sandbox, installs as the
-Flatpak extension `com.obsproject.Studio.Plugin.YtChatTts`, and registers the
-"YouTube Chat TTS" dock. The extension also bundles the offline espeak-ng
-1.51 speech engine as a standalone executable. Later tasks add the chat
-connection UI, voice filtering and queueing, and the audio source.
+This is a C++17/Qt6 OBS Studio module built inside the
+`org.freedesktop.Sdk//25.08` Flatpak sandbox and installed as the Flatpak
+extension `com.obsproject.Studio.Plugin.YtChatTts`. It registers the
+"YouTube Chat TTS" dock, connects to YouTube live chat through a bundled Go
+helper, filters and queues messages, and speaks them with the bundled offline
+espeak-ng engine into a native OBS audio source.
 
 ## Requirements
 
@@ -48,8 +48,8 @@ user-level next to your OBS Studio install.
 ```
 
 Then start `flatpak run com.obsproject.Studio`. Under **Docks** you will find
-"YouTube Chat TTS". Opening it shows the placeholder status. The OBS log
-(`Help → Log Files`) contains `[yt-chat-tts] loaded`.
+"YouTube Chat TTS". The OBS log (`Help → Log Files`) contains
+`[yt-chat-tts] loaded`.
 
 The smoke test only checks what the build guarantees: the plugin binary and
 its locale file landed at the expected paths inside the OBS Flatpak sandbox:
@@ -61,6 +61,53 @@ The espeak-ng test runs the bundled engine inside the same sandbox: it
 checks the binary and data paths, prints the engine version, synthesizes
 "hello from espeak" to a WAV with the `en-us` voice, and verifies the WAV
 header and size. It exits non-zero if any check fails.
+
+## Using the dock
+
+Open **Docks → YouTube Chat TTS** and add the audio source before going live:
+
+1. Under **Audio source**, click **Add TTS source to current scene** (or
+   **Add to all scenes**). The status line below the buttons reports whether
+   the source is present; it is refreshed automatically when scenes change.
+2. Under **Connection**, paste a YouTube video URL or ID. An API key is
+   optional: **Auto** uses the official YouTube API when a key is present and
+   otherwise falls back to the experimental no-key provider; **Official API**
+   requires a key; **No-key (experimental)** never uses one. **Get an API key**
+   opens the Google Cloud credentials page.
+3. Click **Connect**. Connect is refused with a warning when the URL/ID is
+   empty. If no TTS audio source exists, the dock warns without blocking chat
+   reading; speech is simply silent.
+4. Enable **Connect automatically** to connect on the next OBS start when a
+   URL/ID is saved. Auto-connect reports failures in the log instead of
+   opening a dialog.
+
+Settings are applied to the running pipeline as controls change and saved
+automatically 500 ms after the last edit, so there is no separate Save button.
+Voice, rate, pitch, amplitude and volume changes take effect without
+reconnecting; the queue is preserved.
+
+**Voice** offers espeak-ng voices (`en-us`, `en-gb`, `en-in`,
+`en-gb-scotland`, `en-029`) and also accepts a custom voice name. Rate, pitch,
+amplitude and volume have numeric sliders; **Read the author name** and the
+`{author}`/`{message}` template control what is spoken.
+
+**Filtering** limits message length, per-user and global cooldowns, queue
+size, command handling, URL stripping, blocked phrases (one per line), Super
+Chats, new members and moderators.
+
+**Queue** lists the next five accepted messages as `author: text`, refreshing
+while speech runs. **Skip Current** drops queued messages (the sentence already
+playing may finish) and **Clear Queue** empties everything.
+
+The **Log** pane keeps the last 500 lines and has a **Clear Log** button.
+Helper failures are mapped to actionable text: `auth` (rejected key), `quota`
+(exceeded quota), `not_live` (no active stream), `chat_disabled` (chat
+disabled), `network` (retrying) and `parse` (provider response changed). The
+connected/connecting status shows whether the `official` or `innertube`
+provider is in use. The API key is never written to the log.
+
+All user-facing dock strings live in `data/locale/en-US.ini` and are loaded
+through `obs_module_text()`.
 
 ## Go chat helper
 
@@ -86,9 +133,11 @@ YouTube's `V3DataLiveChatMessageService` gRPC endpoint. It emits
 Errors use the codes `auth`, `quota`, `not_live`, `chat_disabled`,
 `network`, `parse`, and `ended`; `fatal` is set when retrying cannot help.
 
-`auto` uses the official provider when an API key is present. The InnerTube
-provider and the keyless `auto` fallback are not implemented yet; selecting
-them exits 1 with a fatal `not_implemented` error.
+`auto` uses the official provider when an API key is present and falls back to
+the experimental keyless InnerTube provider on a pre-connection failure;
+without a key it starts directly with InnerTube. InnerTube is experimental
+because YouTube can change its watch-page and chat response formats without
+notice.
 
 The protobuf definition and its generated Go bindings live under
 `helper/proto/`. The generated files are committed, so building the helper
@@ -101,7 +150,8 @@ with `./scripts/gen-proto.sh`, which requires protoc 27.2 and the pinned
 ```text
 CMakeLists.txt          plugin build (OBS::libobs / OBS::obs-frontend-api / Qt6)
 src/plugin-main.cpp     module entry points, dock registration/removal
-src/yt-chat-tts-dock.*  dock widget (placeholder)
+src/yt-chat-tts-dock.*  dock widget: connection, voice, filtering, queue, audio, log
+src/plugin-context.*    owns chat client, filter, queue, TTS worker and settings
 src/version.h           plugin id, dock id, version constants
 data/locale/en-US.ini   module locale strings
 flatpak/                Flatpak manifest and AppStream metainfo
