@@ -51,7 +51,7 @@ flatpak run --command=sh com.obsproject.Studio -c '
   # Piper/ONNX runtime.  A module built without it is a packaging failure, not
   # a supported espeak-only runtime mode.
   ldd "$MODULE" | grep -q 'libpiper\.so'
-  ldd "$MODULE" | grep -q 'libonnxruntime\.so'
+  ldd "$MODULE" | grep -q 'libonnxruntime-ytc\.so'
 
   test -f "$PREFIX/share/metainfo/com.obsproject.Studio.Plugin.YtChatTts.metainfo.xml"
   test -f "$LICENSES/LICENSE"
