@@ -23,4 +23,9 @@ public:
                             QString *error) = 0;
     virtual void cancel() = 0;
     virtual void resetCancel() = 0;
+
+    /* True when start-up failed permanently (for example a corrupt voice
+     * model) and synthesize() will keep failing.  The worker then hands the
+     * current message to a replacement engine instead of retrying this one. */
+    virtual bool initializationFailed() const { return false; }
 };

@@ -134,6 +134,24 @@ void TtsWorker::run()
             break;
 
         if (!synthesized) {
+            /* A permanent initialization failure (for example a corrupt Piper
+             * model) will never produce audio on this engine.  Hand the current
+             * message to the replacement engine and stop this run loop instead
+             * of retrying the dead engine on every utterance. */
+            if (engine_->initializationFailed()) {
+                queue_.push(msg, 0);
+                const QString reason =
+                    error.isEmpty() ? QStringLiteral("speech engine could not initialize")
+                                    : error;
+                if (speaking) {
+                    speaking = false;
+                    emit statusChanged(QStringLiteral("idle"));
+                }
+                running_.store(false);
+                emit engineUnavailable(reason);
+                break;
+            }
+
             emit errorOccurred(error.isEmpty() ? QStringLiteral("speech synthesis failed")
                                                : error);
             if (queue_.size() == 0) {

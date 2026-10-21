@@ -59,8 +59,24 @@ bool LibPiperApi::ensureSynthesizer(QString *error)
     if (synthesizer_)
         return true;
 
+    // A previously failed create is permanent for this engine: do not retry a
+    // bad model on every utterance.  The worker replaces this engine instead.
+    if (loadFailed_.load()) {
+        return fail(error, loadError_.isEmpty()
+                                ? QStringLiteral("piper model failed to load")
+                                : loadError_);
+    }
+
+    // Latch both the flag and the message so initializationFailed() and a
+    // later report explain the same root cause.
+    const auto failInitialization = [this, error](const QString &message) {
+        loadFailed_.store(true);
+        loadError_ = message;
+        return fail(error, message);
+    };
+
     if (modelPath_.isEmpty())
-        return fail(error, QStringLiteral("piper model path is not configured"));
+        return failInitialization(QStringLiteral("piper model path is not configured"));
 
     // Keep the converted paths alive for the whole call; piper_create may use
     // them during model/config/espeak-ng initialization.
@@ -80,24 +96,26 @@ bool LibPiperApi::ensureSynthesizer(QString *error)
                                                              : espeakDataPath.constData());
     } catch (const std::exception &e) {
         synthesizer_ = nullptr;
-        return fail(error,
-                    QStringLiteral("failed to load Piper model '%1' (config '%2', "
-                                   "espeak-ng data '%3'): %4")
-                        .arg(modelPath_, configPath_, espeakDataPath_,
-                             QString::fromUtf8(e.what())));
+        return failInitialization(
+            QStringLiteral("failed to load Piper model '%1' (config '%2', "
+                           "espeak-ng data '%3'): %4")
+                .arg(modelPath_, configPath_, espeakDataPath_,
+                     QString::fromUtf8(e.what())));
     } catch (...) {
         synthesizer_ = nullptr;
-        return fail(error, QStringLiteral("failed to load Piper model '%1' (config '%2', "
-                                          "espeak-ng data '%3'): unknown exception")
-                               .arg(modelPath_, configPath_, espeakDataPath_));
+        return failInitialization(QStringLiteral("failed to load Piper model '%1' (config "
+                                                 "'%2', espeak-ng data '%3'): unknown exception")
+                                      .arg(modelPath_, configPath_, espeakDataPath_));
     }
 
     if (!synthesizer_) {
-        return fail(error, QStringLiteral("failed to load Piper model '%1' (config '%2', "
-                                          "espeak-ng data '%3')")
-                               .arg(modelPath_, configPath_, espeakDataPath_));
+        return failInitialization(QStringLiteral("failed to load Piper model '%1' (config "
+                                                 "'%2', espeak-ng data '%3')")
+                                      .arg(modelPath_, configPath_, espeakDataPath_));
     }
 
+    loadFailed_.store(false);
+    loadError_.clear();
     return true;
 }
 
@@ -207,4 +225,9 @@ void LibPiperApi::cancel()
 void LibPiperApi::resetCancel()
 {
     cancelRequested_.store(false);
+}
+
+bool LibPiperApi::initializationFailed() const
+{
+    return loadFailed_.load();
 }

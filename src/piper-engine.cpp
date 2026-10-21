@@ -66,3 +66,8 @@ void PiperEngine::resetCancel()
     if (api_)
         api_->resetCancel();
 }
+
+bool PiperEngine::initializationFailed() const
+{
+    return api_ && api_->initializationFailed();
+}

@@ -24,6 +24,7 @@ public:
                     QString *error) override;
     void cancel() override;
     void resetCancel() override;
+    bool initializationFailed() const override;
 
 private:
     std::unique_ptr<PiperApi> api_;

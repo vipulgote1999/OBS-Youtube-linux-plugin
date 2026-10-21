@@ -51,7 +51,9 @@ public:
     void clearQueue();
 
     /* Stops/deletes the worker, clears buffered audio and starts a fresh one
-     * with the current engine settings.  Queued messages are preserved. */
+     * with the current engine settings.  Queued messages are preserved.  An
+     * explicit restart also clears a Piper initialization fallback so Piper is
+     * retried; automatic fallback restarts use the internal path instead. */
     void restartWorker();
 
     /* Applies settings that can change without a persistence write: queue
@@ -79,6 +81,7 @@ private slots:
 
 private:
     bool ensureWorker(QString *error);
+    void restartWorkerInternal();
     void installWorker(std::unique_ptr<TtsEngine> engine);
     bool engineSettingsDiffer() const;
     void applySettingsToWorker();
@@ -109,4 +112,12 @@ private:
     int engineRate_ = -1;
     int enginePitch_ = -1;
     int engineAmplitude_ = -1;
+
+    /* Set when a Piper engine reported a permanent initialization failure.
+     * espeak is then authoritative until the user changes the requested engine
+     * or explicitly restarts; the flag survives the automatic fallback restart
+     * so a bad model cannot cause a restart loop. */
+    bool forcedEspeak_ = false;
+    QString forcedEspeakReason_;
+    bool workerUnavailable_ = false;
 };

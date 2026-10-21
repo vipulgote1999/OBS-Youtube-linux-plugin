@@ -23,4 +23,8 @@ public:
                             QString *error) = 0;
     virtual void cancel() = 0;
     virtual void resetCancel() = 0;
+
+    /* Set once model/config creation has failed permanently.  Implementations
+     * must not retry a bad model on every utterance. */
+    virtual bool initializationFailed() const { return false; }
 };

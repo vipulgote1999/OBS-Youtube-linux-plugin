@@ -213,33 +213,49 @@ bool PluginContext::ensureWorker(QString *error)
     if (error)
         error->clear();
 
-    if (worker_) {
-        /* Keep the live worker unless the engine parameters it was created
-         * with have changed since (for example an engine switch that has not
-         * been applied yet because the dock's coalescing timer is pending). */
-        if (!engineSettingsDiffer()) {
-            applySettingsToWorker();
-            worker_->start();
-            AudioBus::instance().buffer().setVolume(static_cast<float>(settings_.volume));
-            return true;
-        }
+    /* Reuse the live worker unless its engine failed at runtime or an engine
+     * parameter changed (for example an engine switch whose coalescing timer
+     * is still pending). */
+    if (worker_ && !workerUnavailable_ && !engineSettingsDiffer()) {
+        applySettingsToWorker();
+        worker_->start();
+        AudioBus::instance().buffer().setVolume(static_cast<float>(settings_.volume));
+        return true;
+    }
 
+    if (worker_) {
+        const bool engineChange = !workerUnavailable_;
         worker_->stop();
         worker_.reset();
         AudioBus::instance().buffer().clear();
         emit queueChanged();
-        emit logLine(QStringLiteral("tts worker restarted for engine change"));
+        if (engineChange)
+            emit logLine(QStringLiteral("tts worker restarted for engine change"));
     }
 
-    const PiperResources piper = resolvePiperResources(settings_);
     const bool piperRequested =
         settings_.ttsEngine.trimmed().compare(QLatin1String("espeak"), Qt::CaseInsensitive) != 0;
-    TtsBackend backend = chooseTtsBackend(settings_, !piper.modelPath.isEmpty());
+    TtsBackend backend = TtsBackend::Espeak;
+    QString fallbackReason;
+    PiperResources piper;
 
-    /* A requested Piper engine that cannot be created must never go silent:
-     * speak through espeak-ng and log the exact missing resource/runtime. */
-    if (backend == TtsBackend::Piper && !piper.problems.isEmpty())
-        backend = TtsBackend::Espeak;
+    if (forcedEspeak_) {
+        /* A Piper engine already failed to initialize in this session.  Keep
+         * speaking through espeak until the user changes the engine or asks
+         * for an explicit restart. */
+        fallbackReason = forcedEspeakReason_.isEmpty()
+                             ? QStringLiteral("piper could not initialize")
+                             : forcedEspeakReason_;
+    } else {
+        piper = resolvePiperResources(settings_);
+        backend = chooseTtsBackend(settings_, !piper.modelPath.isEmpty());
+
+        /* A requested Piper engine that cannot be created must never go
+         * silent: speak through espeak-ng and log the exact missing
+         * resource/runtime. */
+        if (backend == TtsBackend::Piper && !piper.problems.isEmpty())
+            backend = TtsBackend::Espeak;
+    }
 
     if (backend == TtsBackend::Piper) {
 #ifdef HAVE_LIBPIPER
@@ -249,6 +265,8 @@ bool PluginContext::ensureWorker(QString *error)
         installWorker(std::make_unique<PiperEngine>(std::move(api), settings_.rate));
 
         // Report the engine this context actually created, after every check.
+        // Construction is lazy: a corrupt model is detected on the worker's
+        // first synth, where engineUnavailable() triggers the espeak fallback.
         emit logLine(QStringLiteral("tts engine: piper (") + voice + QLatin1Char(')'));
         emit logLine(QStringLiteral("piper model: ") + piper.modelPath);
         emit logLine(QStringLiteral("piper config: ") + piper.configPath);
@@ -261,20 +279,24 @@ bool PluginContext::ensureWorker(QString *error)
     }
 
     if (backend == TtsBackend::Espeak) {
-        if (piperRequested) {
-            const QString reason =
-                piper.problems.isEmpty()
-                    ? QStringLiteral("piper runtime is unavailable")
-                    : piper.problems.join(QStringLiteral("; "));
-            emit logLine(QStringLiteral("tts engine: espeak-ng (fallback: ") + reason +
-                         QLatin1Char(')'));
-        } else {
-            emit logLine(QStringLiteral("tts engine: espeak-ng"));
+        QString reason = fallbackReason;
+        if (reason.isEmpty() && piperRequested) {
+            reason = piper.problems.isEmpty()
+                         ? QStringLiteral("piper runtime is unavailable")
+                         : piper.problems.join(QStringLiteral("; "));
         }
 
         EspeakSelection espeak;
         if (!createEspeakEngine(settings_, &espeak, error))
             return false;
+
+        /* Only claim espeak-ng is active after it actually constructed. */
+        if (piperRequested && !reason.isEmpty()) {
+            emit logLine(QStringLiteral("tts engine: espeak-ng (fallback: ") + reason +
+                         QLatin1Char(')'));
+        } else {
+            emit logLine(QStringLiteral("tts engine: espeak-ng"));
+        }
 
         installWorker(std::move(espeak.engine));
         emit logLine(QStringLiteral("espeak: ") + espeak.binaryPath);
@@ -299,10 +321,31 @@ bool PluginContext::ensureWorker(QString *error)
     return true;
 }
 
+void PluginContext::restartWorkerInternal()
+{
+    if (worker_) {
+        worker_->stop();
+        worker_.reset();
+    }
+
+    AudioBus::instance().buffer().clear();
+    emit queueChanged();
+
+    QString error;
+    if (!ensureWorker(&error)) {
+        /* Engine failures are diagnostics, not chat connection state. */
+        emit logLine(QStringLiteral("error: ") + error);
+        return;
+    }
+
+    emit logLine(QStringLiteral("tts worker restarted"));
+}
+
 void PluginContext::installWorker(std::unique_ptr<TtsEngine> engine)
 {
     worker_ = std::make_unique<TtsWorker>(queue_, AudioBus::instance().buffer(),
                                            std::move(engine));
+    workerUnavailable_ = false;
 
     /* Worker status/errors are diagnostics; the dock's connection label stays
      * owned by chat status so speech does not overwrite it. */
@@ -313,6 +356,20 @@ void PluginContext::installWorker(std::unique_ptr<TtsEngine> engine)
     connect(worker_.get(), &TtsWorker::errorOccurred, this, [this](const QString &text) {
         emit logLine(QStringLiteral("tts error: ") + text);
     });
+
+    /* The emission is queued onto the UI thread (automatic connection), so the
+     * restart below never runs on the worker thread.  The requeued message is
+     * spoken by the replacement espeak engine. */
+    connect(worker_.get(), &TtsWorker::engineUnavailable, this,
+            [this](const QString &reason) {
+                forcedEspeak_ = true;
+                forcedEspeakReason_ = reason;
+                workerUnavailable_ = true;
+
+                emit logLine(QStringLiteral("tts engine: espeak-ng (fallback: ") + reason +
+                             QLatin1Char(')'));
+                QTimer::singleShot(0, this, [this]() { restartWorkerInternal(); });
+            });
 }
 
 bool PluginContext::engineSettingsDiffer() const
@@ -451,28 +508,25 @@ void PluginContext::clearQueue()
 
 void PluginContext::restartWorker()
 {
-    if (worker_) {
-        worker_->stop();
-        worker_.reset();
-    }
-
-    AudioBus::instance().buffer().clear();
-    emit queueChanged();
-
-    QString error;
-    if (!ensureWorker(&error)) {
-        /* Engine failures are diagnostics, not chat connection state. */
-        emit logLine(QStringLiteral("error: ") + error);
-        return;
-    }
-
-    emit logLine(QStringLiteral("tts worker restarted"));
+    /* An explicit restart is the retry path for a Piper model that failed at
+     * runtime.  The automatic fallback uses restartWorkerInternal() directly,
+     * so it keeps forcedEspeak_ and cannot loop on the bad model. */
+    forcedEspeak_ = false;
+    forcedEspeakReason_.clear();
+    restartWorkerInternal();
 }
 
 void PluginContext::applyLiveSettings()
 {
     queue_.setLimit(settings_.queueLimit);
     AudioBus::instance().buffer().setVolume(static_cast<float>(settings_.volume));
+
+    /* Only a changed requested engine retries Piper after a runtime fallback.
+     * Voice/rate changes preserve the forced-espeak session state. */
+    if (worker_ && settings_.ttsEngine != engineSelection_) {
+        forcedEspeak_ = false;
+        forcedEspeakReason_.clear();
+    }
 
     const bool engineChanged = engineSettingsDiffer();
 
@@ -481,7 +535,7 @@ void PluginContext::applyLiveSettings()
      * this decision so the dock cannot double-restart or log a false engine. */
     applySettingsToWorker();
     if (engineChanged)
-        restartWorker();
+        restartWorkerInternal();
 }
 
 bool PluginContext::saveSettings()

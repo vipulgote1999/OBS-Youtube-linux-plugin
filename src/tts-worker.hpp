@@ -53,6 +53,11 @@ signals:
     void statusChanged(const QString &text);
     void errorOccurred(const QString &text);
 
+    /* Emitted when the injected engine reports a permanent initialization
+     * failure.  The current message has already been requeued, and the worker
+     * stops so PluginContext can replace the engine (normally with espeak). */
+    void engineUnavailable(const QString &reason);
+
 private:
     void run();
     Settings settingsSnapshot() const;

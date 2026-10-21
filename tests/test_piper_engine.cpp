@@ -22,6 +22,7 @@ public:
 
     bool succeed = true;
     bool setErrorOnFailure = true;
+    bool initializationFailedFlag = false;
     int resultSampleRate = kPiperSampleRate;
 
     bool synthesize(const QString &text, float lengthScale, std::vector<float> *pcm,
@@ -43,6 +44,7 @@ public:
 
     void cancel() override { ++cancelCount; }
     void resetCancel() override { ++resetCancelCount; }
+    bool initializationFailed() const override { return initializationFailedFlag; }
 };
 } // namespace
 
@@ -56,6 +58,7 @@ private slots:
     void rejectsWrongSampleRate();
     void rejectsNullApi();
     void cancelIsForwarded();
+    void forwardsInitializationFailure();
 };
 
 void TestPiperEngine::returnsPcmAndRate()
@@ -189,6 +192,23 @@ void TestPiperEngine::cancelIsForwarded()
     QCOMPARE(fake->resetCancelCount, 1);
     engine.resetCancel();
     QCOMPARE(fake->resetCancelCount, 2);
+}
+
+void TestPiperEngine::forwardsInitializationFailure()
+{
+    auto brokenApi = std::make_unique<FakePiperApi>();
+    brokenApi->initializationFailedFlag = true;
+    PiperEngine broken(std::move(brokenApi));
+    QVERIFY(broken.initializationFailed());
+
+    auto healthyApi = std::make_unique<FakePiperApi>();
+    PiperEngine healthy(std::move(healthyApi));
+    QVERIFY(!healthy.initializationFailed());
+
+    /* A missing backend cannot have initialized, but it also has no latched
+     * failure to report; the worker treats it as an ordinary error. */
+    PiperEngine noApi(nullptr);
+    QVERIFY(!noApi.initializationFailed());
 }
 
 QTEST_GUILESS_MAIN(TestPiperEngine)

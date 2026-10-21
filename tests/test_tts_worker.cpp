@@ -102,6 +102,31 @@ private:
     SynthRecorder *recorder_;
 };
 
+/* Reproduces a corrupt Piper model: start-up failed permanently, so every
+ * synthesize() call fails and the worker must not keep retrying it. */
+class FailedInitTtsEngine : public TtsEngine {
+public:
+    explicit FailedInitTtsEngine(SynthRecorder *recorder) : recorder_(recorder) {}
+
+    bool synthesize(const QString &text, std::vector<float> *pcm, int *sampleRate,
+                    QString *error) override
+    {
+        recorder_->record(text);
+        pcm->clear();
+        *sampleRate = 0;
+        if (error)
+            *error = QStringLiteral("failed to load Piper model 'bad'");
+        return false;
+    }
+
+    void cancel() override {}
+    void resetCancel() override {}
+    bool initializationFailed() const override { return true; }
+
+private:
+    SynthRecorder *recorder_;
+};
+
 /* Reproduces the stop/cancel race: synthesize() announces that it started and
  * then blocks until cancel() arrives.  If synthesize() (rather than the worker)
  * cleared the cancel mark, stop() would hang here. */
@@ -163,6 +188,7 @@ class TestTtsWorker : public QObject {
 private slots:
     void TestTtsWorkerStopJoins();
     void failureContinuesToNextMessage();
+    void initializationFailureRequeuesAndStops();
     void rendersWithProvidedSettings();
     void stopDuringSynthesisReturnsPromptly();
 };
@@ -236,6 +262,45 @@ void TestTtsWorker::failureContinuesToNextMessage()
     QTRY_COMPARE_WITH_TIMEOUT(queue.size(), size_t(0), 2000);
 
     worker.stop();
+}
+
+void TestTtsWorker::initializationFailureRequeuesAndStops()
+{
+    TtsQueue queue;
+    AudioBuffer audio;
+    SynthRecorder recorder;
+
+    const ChatMessage original = makeMessage(QStringLiteral("7"));
+    queue.push(original, 0);
+
+    TtsWorker worker(queue, audio, std::make_unique<FailedInitTtsEngine>(&recorder));
+
+    QSignalSpy unavailableSpy(&worker, &TtsWorker::engineUnavailable);
+    QSignalSpy errorSpy(&worker, &TtsWorker::errorOccurred);
+    worker.start();
+
+    /* The permanent failure is reported once and is distinct from an ordinary
+     * per-utterance error. */
+    QTRY_COMPARE_WITH_TIMEOUT(unavailableSpy.count(), 1, 5000);
+    QCOMPARE(unavailableSpy.at(0).at(0).toString(),
+             QStringLiteral("failed to load Piper model 'bad'"));
+    QCOMPARE(errorSpy.count(), 0);
+
+    /* The current message is requeued for the replacement engine. */
+    QCOMPARE(queue.size(), size_t(1));
+    const std::vector<ChatMessage> snapshot = queue.snapshot(10);
+    QCOMPARE(snapshot.size(), size_t(1));
+    QCOMPARE(snapshot.at(0).id, original.id);
+
+    /* No retry loop: the dead engine is not called again and no audio is
+     * appended. */
+    QTest::qWait(300);
+    QCOMPARE(recorder.count(), 1);
+    QCOMPARE(queue.size(), size_t(1));
+    QCOMPARE(audio.available(), size_t(0));
+
+    worker.stop();
+    QCOMPARE(queue.size(), size_t(1));
 }
 
 void TestTtsWorker::rendersWithProvidedSettings()

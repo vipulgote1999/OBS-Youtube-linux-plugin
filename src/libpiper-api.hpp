@@ -34,6 +34,7 @@ public:
                     int *sampleRate, QString *error) override;
     void cancel() override;
     void resetCancel() override;
+    bool initializationFailed() const override;
 
 private:
     bool ensureSynthesizer(QString *error);
@@ -48,6 +49,11 @@ private:
     // not take this lock: it may be called while synthesize() holds it.
     std::mutex synthesizerMutex_;
     piper_synthesizer *synthesizer_ = nullptr;
+
+    // Latched after a failed piper_create() so a bad model is not reloaded on
+    // every utterance.  Cleared only by a successful create.
+    std::atomic_bool loadFailed_{false};
+    QString loadError_; // written under synthesizerMutex_
 
     std::atomic_bool cancelRequested_{false};
 };
