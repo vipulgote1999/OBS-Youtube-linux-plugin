@@ -43,6 +43,12 @@ var streamBackoff = []time.Duration{
 	30 * time.Second,
 }
 
+// maxPreConnectAttempts bounds the connection attempts made before the first
+// successful gRPC response: the initial attempt plus two retries. Running out
+// of attempts returns a non-fatal network error instead of looping forever, so
+// the caller can surface it and auto can fall back to InnerTube.
+const maxPreConnectAttempts = 3
+
 // OfficialProvider streams chat through YouTube's official Data API and the
 // youtube.api.v3.V3DataLiveChatMessageService gRPC service. Empty fields use
 // production defaults; tests override APIBaseURL with an httptest server.
@@ -52,15 +58,15 @@ type OfficialProvider struct {
 	GRPCEndpoint string
 }
 
-// Run resolves cfg.Video to a live chat, reports the connection, and streams
-// messages until the chat ends or ctx is cancelled.
+// Run resolves cfg.Video to a live chat and streams messages until the chat
+// ends or ctx is cancelled. The connected status is emitted by stream only
+// after the gRPC connection is confirmed.
 func (p *OfficialProvider) Run(ctx context.Context, cfg Config, emit func(protocol.Event)) error {
 	_, liveChatID, err := p.resolveLiveChatID(ctx, cfg)
 	if err != nil {
 		return err
 	}
 
-	emit(protocol.Event{Type: "status", State: "connected", Detail: "official"})
 	return p.stream(ctx, cfg, liveChatID, emit)
 }
 
@@ -72,8 +78,10 @@ func (p *OfficialProvider) endpoint() string {
 	return defaultGRPCEndpoint
 }
 
-// stream dials the streaming service and receives chat messages, reconnecting
-// with backoff after EOF or transient failures.
+// stream dials the streaming service and receives chat messages. It emits
+// connected exactly once, after the first successful gRPC response headers.
+// Before that point it gives up after maxPreConnectAttempts; afterwards it
+// reconnects with backoff indefinitely.
 func (p *OfficialProvider) stream(ctx context.Context, cfg Config, liveChatID string, emit func(protocol.Event)) error {
 	conn, err := grpc.NewClient(
 		p.endpoint(),
@@ -92,7 +100,9 @@ func (p *OfficialProvider) stream(ctx context.Context, cfg Config, liveChatID st
 
 	client := streamlist.NewV3DataLiveChatMessageServiceClient(conn)
 	pageToken := ""
-	attempt := 0
+	reconnectAttempt := 0
+	preConnectFailures := 0
+	connected := false
 
 	for {
 		if ctx.Err() != nil {
@@ -113,6 +123,12 @@ func (p *OfficialProvider) stream(ctx context.Context, cfg Config, liveChatID st
 		// The key travels as gRPC metadata, never in a logged URL.
 		callCtx := metadata.AppendToOutgoingContext(ctx, "x-goog-api-key", cfg.APIKey)
 		stream, err := client.StreamList(callCtx, req)
+		if err == nil {
+			// Header blocks until the server responds, which is the first
+			// proof that the transport connection actually works. NewClient
+			// itself is lazy.
+			_, err = stream.Header()
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
@@ -120,8 +136,27 @@ func (p *OfficialProvider) stream(ctx context.Context, cfg Config, liveChatID st
 			if fatal := classifyGRPCError(err); fatal != nil {
 				return fatal
 			}
-			attempt = p.waitBeforeRetry(ctx, attempt, emit)
+			if !connected {
+				preConnectFailures++
+				if preConnectFailures >= maxPreConnectAttempts {
+					return &Error{
+						Code: CodeNetwork,
+						Message: redactSecrets(fmt.Sprintf(
+							"could not connect to the YouTube chat stream after %d attempts: %v",
+							preConnectFailures, err)),
+						Fatal: false,
+					}
+				}
+				reconnectAttempt = p.waitBeforeRetry(ctx, preConnectFailures-1, emit)
+				continue
+			}
+			reconnectAttempt = p.waitBeforeRetry(ctx, reconnectAttempt, emit)
 			continue
+		}
+
+		if !connected {
+			connected = true
+			emit(protocol.Event{Type: "status", State: "connected", Detail: "official"})
 		}
 
 		received, ended, err := p.receive(stream, emit, &pageToken)
@@ -138,12 +173,12 @@ func (p *OfficialProvider) stream(ctx context.Context, cfg Config, liveChatID st
 			}
 		}
 		if received {
-			attempt = 0
+			reconnectAttempt = 0
 		}
 		if ctx.Err() != nil {
 			return nil
 		}
-		attempt = p.waitBeforeRetry(ctx, attempt, emit)
+		reconnectAttempt = p.waitBeforeRetry(ctx, reconnectAttempt, emit)
 	}
 }
 
