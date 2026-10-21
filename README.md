@@ -8,8 +8,9 @@ cables.
 This is the Task 1 skeleton of the plugin: a C++17/Qt6 OBS module is built
 inside the `org.freedesktop.Sdk//25.08` Flatpak sandbox, installs as the
 Flatpak extension `com.obsproject.Studio.Plugin.YtChatTts`, and registers the
-"YouTube Chat TTS" dock. Later tasks add the chat connection UI, the bundled
-espeak-ng engine, voice filtering and queueing, and the audio source.
+"YouTube Chat TTS" dock. The extension also bundles the offline espeak-ng
+1.51 speech engine as a standalone executable. Later tasks add the chat
+connection UI, voice filtering and queueing, and the audio source.
 
 ## Requirements
 
@@ -43,6 +44,7 @@ user-level next to your OBS Studio install.
 ```bash
 ./scripts/smoke-flatpak.sh
 # smoke: extension installed
+./scripts/test-espeak-flatpak.sh
 ```
 
 Then start `flatpak run com.obsproject.Studio`. Under **Docks** you will find
@@ -55,6 +57,11 @@ its locale file landed at the expected paths inside the OBS Flatpak sandbox:
 - `/app/plugins/YtChatTts/lib/obs-plugins/yt-chat-tts.so`
 - `/app/plugins/YtChatTts/share/obs/obs-plugins/yt-chat-tts/locale/en-US.ini`
 
+The espeak-ng test runs the bundled engine inside the same sandbox: it
+checks the binary and data paths, prints the engine version, synthesizes
+"hello from espeak" to a WAV with the `en-us` voice, and verifies the WAV
+header and size. It exits non-zero if any check fails.
+
 ## Layout
 
 ```text
@@ -64,11 +71,22 @@ src/yt-chat-tts-dock.*  dock widget (placeholder)
 src/version.h           plugin id, dock id, version constants
 data/locale/en-US.ini   module locale strings
 flatpak/                Flatpak manifest and AppStream metainfo
-scripts/                build and smoke-test scripts
+scripts/                build, smoke-test, and espeak-ng test scripts
 ```
+
+The bundled espeak-ng runtime lives next to the plugin files inside the
+extension:
+
+- `/app/plugins/YtChatTts/share/obs/obs-plugins/yt-chat-tts/bin/espeak-ng` —
+  standalone engine executable, statically linked against the bundled
+  espeak-ng library (it has no `libespeak-ng.so` dependency)
+- `/app/plugins/YtChatTts/share/obs/obs-plugins/yt-chat-tts/espeak-ng-data/` —
+  voice and dictionary data; point `ESPEAK_DATA_PATH` at this directory when
+  invoking the executable
 
 ## License
 
 Project code: GPL-2.0-or-later (see `LICENSE`).
-Later tasks bundle espeak-ng, which is a separate executables licensed
-GPL-3.0-or-later; its license text and source link will ship with it.
+The bundled espeak-ng 1.51 is a separate executable licensed
+GPL-3.0-or-later; its license text is in `LICENSES/espeak-ng.txt` and its
+source URL and build details are recorded in `THIRD_PARTY_NOTICES.md`.

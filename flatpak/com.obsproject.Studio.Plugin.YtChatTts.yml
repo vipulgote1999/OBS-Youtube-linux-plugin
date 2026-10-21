@@ -8,6 +8,24 @@ separate-locales: false
 build-options:
   prefix: /app/plugins/YtChatTts
 modules:
+  - name: espeak-ng
+    buildsystem: autotools
+    config-opts:
+      - --disable-shared
+      - --enable-static
+      - --without-pcaudiolib
+      - --without-sonic
+      - --without-async
+    sources:
+      - type: archive
+        url: https://github.com/espeak-ng/espeak-ng/archive/refs/tags/1.51.tar.gz
+        sha256: f0e028f695a8241c4fa90df7a8c8c5d68dcadbdbc91e758a97e594bbb0a3bdbf
+    post-install:
+      - install -d ${FLATPAK_DEST}/share/obs/obs-plugins/yt-chat-tts/bin
+      - install -Dm755 ${FLATPAK_DEST}/bin/espeak-ng ${FLATPAK_DEST}/share/obs/obs-plugins/yt-chat-tts/bin/espeak-ng
+      - cp -a ${FLATPAK_DEST}/share/espeak-ng-data ${FLATPAK_DEST}/share/obs/obs-plugins/yt-chat-tts/
+      - strip ${FLATPAK_DEST}/share/obs/obs-plugins/yt-chat-tts/bin/espeak-ng
+      - rm -rf ${FLATPAK_DEST}/bin ${FLATPAK_DEST}/share/espeak-ng-data
   - name: yt-chat-tts
     buildsystem: cmake-ninja
     config-opts:
