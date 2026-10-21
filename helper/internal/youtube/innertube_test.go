@@ -76,11 +76,60 @@ func TestWatchPageNoChat(t *testing.T) {
 	}
 }
 
+// TestWatchPageVODNotLive verifies that a past video is rejected before its
+// chat-replay continuation is considered.
+func TestWatchPageVODNotLive(t *testing.T) {
+	_, err := parseWatchPage(readFixture(t, "watch_page_vod.html"))
+	var yerr *Error
+	if !errors.As(err, &yerr) || yerr.Code != CodeNotLive {
+		t.Fatalf("parseWatchPage() error = %v, want code %q", err, CodeNotLive)
+	}
+	if !yerr.Fatal {
+		t.Error("Fatal = false, want true")
+	}
+}
+
+// TestWatchPageUpcomingNotLive verifies that an upcoming premiere is rejected
+// as not live.
+func TestWatchPageUpcomingNotLive(t *testing.T) {
+	_, err := parseWatchPage(readFixture(t, "watch_page_upcoming.html"))
+	var yerr *Error
+	if !errors.As(err, &yerr) || yerr.Code != CodeNotLive {
+		t.Fatalf("parseWatchPage() error = %v, want code %q", err, CodeNotLive)
+	}
+	if !yerr.Fatal {
+		t.Error("Fatal = false, want true")
+	}
+}
+
+// TestNextChatContinuationRejectsReplay verifies that a live-chat replay token
+// is never treated as a source of live messages.
+func TestNextChatContinuationRejectsReplay(t *testing.T) {
+	continuations := gjson.Parse(`[
+		{"liveChatReplayContinuationData":{"continuation":"REPLAY_TOKEN"}},
+		{"invalidationContinuationData":{"continuation":"LIVE_TOKEN","timeoutMs":5000}}
+	]`)
+	token, wait := nextChatContinuation(continuations)
+	if token != "LIVE_TOKEN" {
+		t.Errorf("token = %q, want LIVE_TOKEN", token)
+	}
+	if wait != 5*time.Second {
+		t.Errorf("wait = %s, want 5s", wait)
+	}
+
+	replayOnly := gjson.Parse(`[{"liveChatReplayContinuationData":{"continuation":"REPLAY_TOKEN"}}]`)
+	if token, _ := nextChatContinuation(replayOnly); token != "" {
+		t.Errorf("replay-only token = %q, want no token", token)
+	}
+}
+
 // TestParseWatchPageWindowAssignment covers the window["ytInitialData"] form
 // YouTube also emits.
 func TestParseWatchPageWindowAssignment(t *testing.T) {
 	html := `<html><script>
 window["ytInitialData"] = {"contents":{"twoColumnWatchNextResults":{"conversationBar":{"liveChatRenderer":{"header":{"liveChatHeaderRenderer":{"viewSelector":{"sortFilterSubMenuRenderer":{"subMenuItems":[{"title":"Top chat"},{"title":"Live chat","continuation":{"reloadContinuationData":{"continuation":"WINDOW_TOKEN"}}}]}}}}}}}}};
+</script><script>
+var ytInitialPlayerResponse = {"playabilityStatus":{"status":"OK"},"videoDetails":{"isLive":true,"isLiveContent":true}};
 </script><script>
 ytcfg.set({"INNERTUBE_API_KEY":"window-key","INNERTUBE_CONTEXT":{"client":{"clientName":"WEB","clientVersion":"2.1"}}});
 </script></html>`
@@ -363,6 +412,44 @@ func TestRunInnerTubeChatDisabled(t *testing.T) {
 	var yerr *Error
 	if !errors.As(err, &yerr) || yerr.Code != CodeChatDisabled {
 		t.Fatalf("Run() error = %v, want code %q", err, CodeChatDisabled)
+	}
+}
+
+// TestRunInnerTubeVODNotLive verifies that Run rejects a past VOD with chat
+// replay before any chat request is made.
+func TestRunInnerTubeVODNotLive(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/watch" {
+			t.Errorf("unexpected path %q; chat must not be requested", r.URL.Path)
+		}
+		w.Write(readFixture(t, "watch_page_vod.html"))
+	}))
+	defer srv.Close()
+
+	p := &InnerTubeProvider{HTTP: srv.Client(), BaseURL: srv.URL}
+	err := p.Run(context.Background(), Config{Video: "dQw4w9WgXcQ"}, func(protocol.Event) {})
+	var yerr *Error
+	if !errors.As(err, &yerr) || yerr.Code != CodeNotLive {
+		t.Fatalf("Run() error = %v, want code %q", err, CodeNotLive)
+	}
+}
+
+// TestRunInnerTubeUpcomingNotLive verifies that Run rejects an upcoming
+// premiere before any chat request is made.
+func TestRunInnerTubeUpcomingNotLive(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/watch" {
+			t.Errorf("unexpected path %q; chat must not be requested", r.URL.Path)
+		}
+		w.Write(readFixture(t, "watch_page_upcoming.html"))
+	}))
+	defer srv.Close()
+
+	p := &InnerTubeProvider{HTTP: srv.Client(), BaseURL: srv.URL}
+	err := p.Run(context.Background(), Config{Video: "dQw4w9WgXcQ"}, func(protocol.Event) {})
+	var yerr *Error
+	if !errors.As(err, &yerr) || yerr.Code != CodeNotLive {
+		t.Fatalf("Run() error = %v, want code %q", err, CodeNotLive)
 	}
 }
 

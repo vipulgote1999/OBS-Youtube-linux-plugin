@@ -45,8 +45,17 @@ private:
     void emitStatus(const QString &state, const QString &detail);
     void emitError(const QString &code, const QString &detail, bool fatal);
     void discardProcess();
+    void processOutput(const QByteArray &data);
+    void processBuffer();
+    void trackHelperEvent(const ChatEvent &event);
 
     QProcess *process_ = nullptr;
     QByteArray buffer_;
     bool userStopped_ = false;
+
+    /* Whether the most recent helper event was a terminal error, and whether
+     * the helper already announced a normal end.  onFinished() uses these to
+     * avoid overwriting the real provider error with helper_exited/ended. */
+    bool lastEventWasError_ = false;
+    bool endedSeen_ = false;
 };

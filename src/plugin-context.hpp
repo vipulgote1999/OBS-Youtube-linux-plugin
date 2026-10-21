@@ -4,6 +4,7 @@
 #include <memory>
 #include <vector>
 
+#include <QHash>
 #include <QObject>
 #include <QString>
 
@@ -13,6 +14,7 @@
 #include "tts-queue.hpp"
 
 class ChatClient;
+class QTimer;
 class TtsWorker;
 
 /**
@@ -75,12 +77,20 @@ private slots:
 private:
     bool ensureWorker(QString *error);
     void applySettingsToWorker();
+    void flushDropSummary();
 
     Settings settings_;
     MessageFilter filter_;
     TtsQueue queue_;
     std::unique_ptr<ChatClient> client_;
     std::unique_ptr<TtsWorker> worker_;
+
+    /* Bounded reporting for high-volume chat: filter drops are counted per
+     * reason and queue evictions are read from the queue, then one summary line
+     * is emitted periodically instead of one line per dropped message. */
+    QHash<QString, int> filterDrops_;
+    uint64_t queueEvictionsLogged_ = 0;
+    QTimer *dropLogTimer_ = nullptr;
 
     /* Engine parameters the current worker was created with; used to restart
      * the worker when voice/rate/pitch/amplitude change. */

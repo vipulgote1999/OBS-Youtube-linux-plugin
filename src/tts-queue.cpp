@@ -28,6 +28,7 @@ void TtsQueue::evictLowest()
 {
     const auto victim = std::min_element(items_.begin(), items_.end(), lowerPriority);
     items_.erase(victim);
+    ++evicted_;
 }
 
 void TtsQueue::push(const ChatMessage &msg, int priority)
@@ -90,6 +91,12 @@ size_t TtsQueue::size() const
 {
     std::lock_guard<std::mutex> lock(mutex_);
     return items_.size();
+}
+
+uint64_t TtsQueue::evictionCount() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return evicted_;
 }
 
 std::vector<ChatMessage> TtsQueue::snapshot(size_t max) const

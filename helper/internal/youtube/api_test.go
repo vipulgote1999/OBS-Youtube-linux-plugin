@@ -137,6 +137,20 @@ func TestResolveNoLive(t *testing.T) {
 	assertCode(t, err, CodeNotLive)
 }
 
+// TestResolveChatDisabled checks that a started-but-not-ended broadcast without
+// an activeLiveChatId maps to chat_disabled, not not_live.
+func TestResolveChatDisabled(t *testing.T) {
+	p, _ := newTestProvider(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, string(readFixture(t, "videos_chat_disabled.json")))
+	})
+
+	_, _, err := p.resolveLiveChatID(context.Background(), Config{
+		APIKey: "test-key",
+		Video:  "dQw4w9WgXcQ",
+	})
+	assertCode(t, err, CodeChatDisabled)
+}
+
 // TestAPIErrorQuota checks that a quotaExceeded response maps to CodeQuota.
 func TestAPIErrorQuota(t *testing.T) {
 	p, _ := newTestProvider(t, func(w http.ResponseWriter, r *http.Request) {

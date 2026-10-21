@@ -362,6 +362,23 @@ func parseWatchPage(page []byte) (watchPage, error) {
 		wp.ClientVersion = gjson.Get(cfgText, "INNERTUBE_CONTEXT.client.clientVersion").String()
 	}
 
+	/* Liveness must be established before accepting a chat continuation.  A
+	 * past VOD can carry a live-chat replay continuation; without this check
+	 * the provider would speak historical messages as if they were live. */
+	playerText, _, _ := findAssignedJSON(text, "ytInitialPlayerResponse")
+	live, known := watchPageLiveness(dataText, playerText)
+	if !live {
+		message := "no active live stream for this video (it may be upcoming, ended, or a regular video)"
+		if !known {
+			message = "could not confirm an active live stream on this watch page"
+		}
+		return watchPage{}, &Error{
+			Code:    CodeNotLive,
+			Message: message,
+			Fatal:   true,
+		}
+	}
+
 	wp.Continuation = chatContinuation(dataText)
 	if wp.Continuation == "" {
 		return watchPage{}, &Error{
@@ -372,6 +389,44 @@ func parseWatchPage(page []byte) (watchPage, error) {
 	}
 	wp.InitialContinuation = initialChatContinuation(dataText)
 	return wp, nil
+}
+
+// watchPageLiveness reports whether a watch page is an active live stream and
+// whether the page carried enough information to decide.  ytInitialPlayerResponse
+// is authoritative when present; ytInitialData supplies a fallback for pages
+// that only expose the live view counter.
+func watchPageLiveness(initialData, player string) (live bool, known bool) {
+	if strings.TrimSpace(player) != "" {
+		if gjson.Get(player, "videoDetails.isLive").Bool() ||
+			gjson.Get(player, "microformat.playerMicroformatRenderer.liveBroadcastDetails.isLiveNow").Bool() {
+			return true, true
+		}
+		if status := gjson.Get(player, "playabilityStatus.status").String(); status == "LIVE_STREAM_OFFLINE" {
+			return false, true
+		}
+		/* isLive is present (and false) on ordinary videos and upcoming
+		 * premieres; isLiveContent additionally marks ended live videos. */
+		if gjson.Get(player, "videoDetails.isLive").Exists() {
+			return false, true
+		}
+		if gjson.Get(player, "microformat.playerMicroformatRenderer.liveBroadcastDetails").Exists() {
+			return false, true
+		}
+		if gjson.Get(player, "videoDetails.isLiveContent").Bool() {
+			return false, true
+		}
+		if status := gjson.Get(player, "playabilityStatus.status").String(); status != "" && status != "OK" {
+			return false, true
+		}
+	}
+
+	if gjson.Get(initialData,
+		"contents.twoColumnWatchNextResults.results.results.contents.0."+
+			"videoPrimaryInfoRenderer.viewCount.videoViewCountRenderer.isLive").
+		Bool() {
+		return true, true
+	}
+	return false, false
 }
 
 // initialChatContinuation reads the chat renderer's own continuation token.
@@ -666,6 +721,8 @@ func timestampUsec(raw string) string {
 // nextChatContinuation returns the first chat continuation token and its
 // suggested wait. Seek and reload continuations are not message sources but
 // their tokens are still usable for the next live chat request.
+// liveChatReplayContinuationData is deliberately ignored: live chat replay is
+// historical chat, not an active stream, and is rejected as non-live upstream.
 func nextChatContinuation(continuations gjson.Result) (string, time.Duration) {
 	if !continuations.IsArray() {
 		return "", 0
@@ -678,7 +735,6 @@ func nextChatContinuation(continuations gjson.Result) (string, time.Duration) {
 			"invalidationContinuationData",
 			"timedContinuationData",
 			"reloadContinuationData",
-			"liveChatReplayContinuationData",
 		} {
 			data := entry.Get(key)
 			if !data.Exists() {

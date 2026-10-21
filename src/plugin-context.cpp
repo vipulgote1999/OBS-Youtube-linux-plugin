@@ -2,8 +2,10 @@
 
 #include <QDateTime>
 #include <QFileInfo>
+#include <QStringList>
 #include <QTimer>
 
+#include <algorithm>
 #include <utility>
 
 #include "audio-bus.hpp"
@@ -35,6 +37,13 @@ PluginContext::PluginContext(QObject *parent)
       client_(std::make_unique<ChatClient>())
 {
     connect(client_.get(), &ChatClient::eventReceived, this, &PluginContext::onChatEvent);
+
+    /* One bounded summary line per interval keeps high-volume chat readable;
+     * the counters below explain what was dropped without per-message spam. */
+    dropLogTimer_ = new QTimer(this);
+    dropLogTimer_->setInterval(10000);
+    connect(dropLogTimer_, &QTimer::timeout, this, &PluginContext::flushDropSummary);
+    dropLogTimer_->start();
 
     AudioBus::instance().buffer().setVolume(static_cast<float>(settings_.volume));
 }
@@ -131,6 +140,40 @@ void PluginContext::applySettingsToWorker()
 {
     if (worker_)
         worker_->setSettings(settings_);
+}
+
+void PluginContext::flushDropSummary()
+{
+    int dropped = 0;
+    for (auto it = filterDrops_.cbegin(); it != filterDrops_.cend(); ++it)
+        dropped += it.value();
+
+    const uint64_t evictedTotal = queue_.evictionCount();
+    const uint64_t evicted =
+        evictedTotal > queueEvictionsLogged_ ? evictedTotal - queueEvictionsLogged_ : 0;
+    if (dropped == 0 && evicted == 0)
+        return;
+
+    QString details;
+    if (dropped > 0) {
+        QStringList reasons = filterDrops_.keys();
+        std::sort(reasons.begin(), reasons.end());
+        QStringList counts;
+        for (const QString &reason : reasons) {
+            counts.append(
+                QStringLiteral("%1 %2").arg(reason).arg(filterDrops_.value(reason)));
+        }
+        details = QStringLiteral(" (") + counts.join(QStringLiteral(", ")) + QLatin1Char(')');
+    }
+
+    emit logLine(
+        QStringLiteral("tts: filter dropped %1 message(s)%2; queue evicted %3 message(s)")
+            .arg(dropped)
+            .arg(details)
+            .arg(static_cast<qulonglong>(evicted)));
+
+    filterDrops_.clear();
+    queueEvictionsLogged_ = evictedTotal;
 }
 
 bool PluginContext::connectChat(QString *error)
@@ -305,8 +348,12 @@ void PluginContext::onChatEvent(const ChatEvent &event)
 
         const FilterDecision decision =
             filter_.evaluate(event.message, settings_, QDateTime::currentMSecsSinceEpoch());
-        if (!decision.accept)
+        if (!decision.accept) {
+            const QString reason =
+                decision.reason.isEmpty() ? QStringLiteral("filtered") : decision.reason;
+            ++filterDrops_[reason];
             return;
+        }
 
         queue_.push(event.message, decision.priority);
         emit queueChanged();

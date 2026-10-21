@@ -260,7 +260,7 @@ dock's **Log** pane mirrors the important status and error lines.
 | Test Voice is silent | Source missing, muted, or at zero volume; check the Audio Mixer and the dock's **Volume**. |
 | `API key rejected; check the key and API restrictions` | Key is wrong, YouTube Data API v3 is not enabled, or the key is restricted to the wrong API or to HTTP referrers. Remove the referrer restriction and allow YouTube Data API v3. |
 | `YouTube quota exceeded; try No-key or wait until midnight PT` | Daily quota exhausted. Use No-key or wait for the Pacific-time reset. |
-| `No active live stream found` | URL is past, upcoming, private, or not a live video. Start from an active live URL. |
+| `No active live stream found` | URL is past, upcoming, or not a live video. Start from an active live URL. With the official provider a private video is rejected as an API/auth error (`API key rejected…`) rather than `not_live`; with the no-key provider it is reported as not live. |
 | `Live chat is disabled for this stream` | The broadcast has chat turned off; nothing can read it. |
 | `YouTube response changed; try the other provider` | The experimental provider's parsing no longer matches YouTube. Switch to the official provider (or update the plugin). |
 | `Network error; retrying` | Transient DNS/TLS/transport problem; wait for the capped backoff. If it persists, check connectivity to `youtube.googleapis.com` and the gRPC endpoint. |
@@ -333,6 +333,7 @@ share/metainfo/com.obsproject.Studio.Plugin.YtChatTts.metainfo.xml
 share/licenses/com.obsproject.Studio.Plugin.YtChatTts/LICENSE
 share/licenses/com.obsproject.Studio.Plugin.YtChatTts/THIRD_PARTY_NOTICES.md
 share/licenses/com.obsproject.Studio.Plugin.YtChatTts/LICENSES/espeak-ng.txt
+share/licenses/com.obsproject.Studio.Plugin.YtChatTts/LICENSES/go/
 ```
 
 The espeak-ng executable is statically linked against its own library and has
@@ -352,7 +353,15 @@ removed by the manifest and are not shipped.
 - Only public live chat readable by the selected provider is supported. The
   official `streamList` path may reject chats for videos not owned by the key;
   that case is not claimed as verified.
-- The InnerTube provider is unofficial and may break without notice.
+- The InnerTube provider is unofficial and may break without notice. Live-chat
+  replay is not supported: past VODs and upcoming premieres are rejected as
+  `not_live`.
+- **UI responsiveness:** the helper is started and stopped synchronously on the
+  OBS UI thread, and changing voice/rate/pitch/amplitude restarts the speech
+  worker. Connecting can block briefly while the helper starts; disconnecting
+  or unloading can wait for process termination. A hung helper can delay OBS
+  for up to a few seconds (5 s start wait plus up to 2 s terminate and 2 s kill
+  grace). This is known inherited debt, not fixed in v0.1.0.
 - The extension is x86-64 only and requires a rebuild after OBS or runtime
   updates that change the plugin ABI.
 - No moderation, message sending, OAuth sign-in or historical chat download.
@@ -369,6 +378,8 @@ the live acceptance matrix; see `docs/acceptance-checklist.md`.
 
 Project code is GPL-2.0-or-later; see [`LICENSE`](LICENSE). Third-party
 components and their licenses are documented in
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md); the full espeak-ng
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). The full espeak-ng
 GPL-3.0-or-later text used by the bundled executable is in
-[`LICENSES/espeak-ng.txt`](LICENSES/espeak-ng.txt).
+[`LICENSES/espeak-ng.txt`](LICENSES/espeak-ng.txt), and authoritative texts for
+every statically linked Go dependency are vendored under
+[`LICENSES/go/`](LICENSES/go/).

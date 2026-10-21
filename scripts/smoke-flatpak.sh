@@ -26,7 +26,24 @@ flatpak run --command=sh com.obsproject.Studio -c '
   test -f "$PREFIX/share/metainfo/com.obsproject.Studio.Plugin.YtChatTts.metainfo.xml"
   test -f "$LICENSES/LICENSE"
   test -f "$LICENSES/THIRD_PARTY_NOTICES.md"
-  test -f "$LICENSES/LICENSES/espeak-ng.txt"
+  for license in \
+    LICENSES/espeak-ng.txt \
+    LICENSES/go/genproto-LICENSE \
+    LICENSES/go/gjson-LICENSE \
+    LICENSES/go/grpc-LICENSE \
+    LICENSES/go/grpc-NOTICE.txt \
+    LICENSES/go/match-LICENSE \
+    LICENSES/go/pretty-LICENSE \
+    LICENSES/go/protobuf-LICENSE \
+    LICENSES/go/protobuf-PATENTS \
+    LICENSES/go/x-net-LICENSE \
+    LICENSES/go/x-net-PATENTS \
+    LICENSES/go/x-sys-LICENSE \
+    LICENSES/go/x-sys-PATENTS \
+    LICENSES/go/x-text-LICENSE \
+    LICENSES/go/x-text-PATENTS; do
+    test -f "$LICENSES/$license"
+  done
 
   for binary in "$MODULE" "$ESPEAK"; do
     if ldd "$binary" | grep "not found"; then

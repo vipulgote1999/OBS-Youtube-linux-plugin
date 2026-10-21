@@ -4,7 +4,10 @@ Status legend: `[x]` passed and evidenced in this file, `[ ]` not run.
 
 - **Version:** 0.1.0
 - **Branch:** `feature/yt-chat-tts`
-- **Headless gate commit:** see the Task 12 report (`docs` finalization commit)
+- **Headless clean-build gate commit:** `7afa0ba` (extension, scripts and docs
+  under test). `d05ba8b` is a README-only follow-up, and the final fix-wave
+  commit is the commit containing this checklist (revalidated with the same
+  gate; see `task-12-report.md`).
 - **Target:** OBS Studio Flatpak 32.2.2 on x86-64, extension
   `com.obsproject.Studio.Plugin.YtChatTts`
 - **Date of headless run:** 2026-10-21
@@ -39,35 +42,71 @@ Commands and results:
 
 ```bash
 flatpak run --command=sh com.obsproject.Studio -c '
-  ldd /app/plugins/YtChatTts/lib/obs-plugins/yt-chat-tts.so | grep "not found" && exit 1 || true
-  test -x /app/plugins/YtChatTts/share/obs/obs-plugins/yt-chat-tts/bin/ytchat-helper
-  /app/plugins/YtChatTts/share/obs/obs-plugins/yt-chat-tts/bin/ytchat-helper --version || true
+  set -eu
+  MODULE=/app/plugins/YtChatTts/lib/obs-plugins/yt-chat-tts.so
+  HELPER=/app/plugins/YtChatTts/share/obs/obs-plugins/yt-chat-tts/bin/ytchat-helper
+  if ldd "$MODULE" | grep "not found"; then
+    echo "missing shared library" >&2
+    exit 1
+  fi
+  test -x "$HELPER"
+  "$HELPER" --version | grep -q "^ytchat-helper "
 '
 ```
 
 Result: `[x]` exit 0, no missing shared libraries, helper executable, prints
-`ytchat-helper 0.1.0`.
+`ytchat-helper 0.1.0`. The `ldd` check exits non-zero on any `not found` line;
+there is no `|| true` escape hatch, so a missing library fails the command.
 
 ### Installed-layout evidence
 
-Every path below was verified by `scripts/smoke-flatpak.sh` inside the OBS
-sandbox:
+Verified by `scripts/smoke-flatpak.sh` inside the OBS sandbox:
 
 - [x] `/app/plugins/YtChatTts/lib/obs-plugins/yt-chat-tts.so`
 - [x] `/app/plugins/YtChatTts/share/obs/obs-plugins/yt-chat-tts/locale/en-US.ini`
 - [x] `/app/plugins/YtChatTts/share/obs/obs-plugins/yt-chat-tts/bin/ytchat-helper` (executable)
 - [x] `/app/plugins/YtChatTts/share/obs/obs-plugins/yt-chat-tts/bin/espeak-ng` (executable)
-- [x] `/app/plugins/YtChatTts/share/obs/obs-plugins/yt-chat-tts/espeak-ng-data/` (488 files, ~13 MB)
+- [x] `/app/plugins/YtChatTts/share/obs/obs-plugins/yt-chat-tts/espeak-ng-data/` (directory)
 - [x] `/app/plugins/YtChatTts/share/metainfo/com.obsproject.Studio.Plugin.YtChatTts.metainfo.xml`
 - [x] `/app/plugins/YtChatTts/share/licenses/com.obsproject.Studio.Plugin.YtChatTts/LICENSE`
 - [x] `/app/plugins/YtChatTts/share/licenses/com.obsproject.Studio.Plugin.YtChatTts/THIRD_PARTY_NOTICES.md`
-- [x] `/app/plugins/YtChatTts/share/licenses/com.obsproject.Studio.Plugin.YtChatTts/LICENSES/espeak-ng.txt`
-- [x] Build-only espeak-ng artifacts are absent (`include/espeak-ng`,
-      `lib/libespeak-ng.a`, pkg-config, vim/man pages)
+- [x] `LICENSES/espeak-ng.txt` and every vendored Go text under `LICENSES/go/`
 - [x] `ldd` reports no `not found` for the module or espeak-ng
+- [x] Build-only espeak-ng artifacts `include/espeak-ng` and
+      `lib/libespeak-ng.a` are absent (smoke check)
+
+Verified by **manual sandbox inspection** on 2026-10-21 (not by
+`smoke-flatpak.sh`):
+
+- [x] `espeak-ng-data` contains 488 files, about 13 MB
+      (`find .../espeak-ng-data -type f | wc -l`; `du -sh`)
+- [x] espeak-ng pkg-config, vim addons and man pages are absent from the
+      installed tree (`find /app/plugins/YtChatTts -maxdepth 4`)
 - [x] AppStream compose succeeded during the Flatpak build
 
-## 2. Live OBS / provider / recording matrix — PENDING
+## 2. Prior helper-level live evidence (Task 5)
+
+Before the OBS UI existed, the helper-level no-key gate was run on a public
+live stream on 2026-10-21 with commit `a1549b1` (see `task-5-report.md`):
+
+- `innertube`: connected and returned 73 chat actions in the first response
+  (`invalidationContinuationData.timeoutMs = 10000`) for
+  `https://www.youtube.com/watch?v=0sfDth4lMLc`.
+- `auto` without a key: connected through InnerTube directly and produced 39
+  message events; no official-provider request was attempted.
+
+This is CLI evidence for the helper, not for the OBS dock, audio source or
+recording. The frontend items below remain **PENDING**.
+
+After the final-review fix wave, the controller reran the helper-level no-key
+gate on 2026-10-21 against the same public stream
+`https://www.youtube.com/watch?v=0sfDth4lMLc` with `provider=innertube`: the
+helper emitted `connecting` → `connected`, delivered real chat messages,
+produced no stderr output, and was stopped by the test timeout. This validates
+the InnerTube helper path after the liveness/replay changes; it is still **not**
+OBS/frontend acceptance.
+
+## 3. Live OBS / provider / recording matrix — PENDING
 
 > **Not run.** The user's OBS session was running throughout Task 12. Per the
 > task constraints, OBS was not launched, the session's configuration was not
@@ -78,8 +117,10 @@ Operator prerequisites:
 
 - OBS Studio Flatpak 32.2.2 with the extension from this commit installed.
 - Restart OBS after installing so it loads the new extension.
-- A public, currently-live YouTube video URL; a second URL for a chat-disabled
-  stream; and a past/upcoming/private URL for the `not_live` item.
+- A public, currently-live YouTube video URL.
+- A second live stream with chat disabled.
+- A past VOD and an upcoming premiere for the `not_live` items.
+- Optionally a private video URL for the provider-specific error check.
 - A valid YouTube Data API v3 key (official items) and a deliberately invalid
   key (fallback item). Paste keys into the dock; never put one on a command
   line or in a log.
@@ -96,11 +137,11 @@ Record the actual result and date next to each item when executed.
 | 2 | PENDING | Official provider, valid key, public live chat | Set **Provider = Official API**, paste the valid key and a live URL, **Connect**. Status becomes `Connected (official)`; new chat messages are spoken; log has no key. |
 | 3 | PENDING | Bad key with `Auto` warns and falls back to InnerTube | Set **Provider = Auto**, paste an invalid key and a live URL, **Connect**. Dock log shows `official provider unavailable (auth); falling back to experimental innertube`; status becomes `Connected (innertube)` and messages are spoken. |
 | 4 | PENDING | No-key provider on a public live chat | Set **Provider = No-key (experimental)**, clear the key, connect to a live URL. Status `Connected (innertube)`; messages are spoken. |
-| 5 | PENDING | Invalid / past / upcoming URL gives `not_live`, no loop | Connect with a past VOD URL, an upcoming premiere URL and a private URL (one at a time). Dock shows `No active live stream found`; status stops in error/ended; the log does not repeat connect attempts indefinitely. |
-| 6 | PENDING | Chat-disabled stream gives `chat_disabled` | Connect to a live stream whose chat is disabled. Dock shows `Live chat is disabled for this stream`; no repeated retries. |
-| 7 | PENDING | Stream ends: `ended`, no crash, no orphan helper | While connected to a live stream, let it end (or use a stream ending during the test). Dock shows `Stream ended`; OBS stays responsive. Then `pgrep -af 'ytchat-helper|espeak-ng'` shows no helper for that stream. |
-| 8 | PENDING | High-volume chat stays bounded | Connect to a busy chat (or a replay with high rate) for at least 5 minutes. Dock queue count never exceeds **Queue limit**; log shows skipped/dropped messages; memory stays flat. `for i in $(seq 1 12); do ps -o rss= -p "$(pgrep -f ytchat-helper)"; sleep 5; done` |
-| 9 | PENDING | Long / emoji-only / URL-only / blocklisted messages | Send or observe messages longer than **Max length**, emoji-only, URL-only, and one containing a blocklisted phrase. Long messages are truncated, emoji-only/URL-only/blocklisted are skipped as configured, normal messages still speak. |
+| 5 | PENDING | Past VOD and upcoming premiere give `not_live` (both providers); private input differs | **Official API**: a past VOD and an upcoming premiere show `No active live stream found`; no retry loop. **No-key**: a past VOD (even with chat replay) and an upcoming premiere also show `No active live stream found`; no replay messages are spoken. **Private video**: Official currently reports `API key rejected…`/`auth` (permission error), No-key reports `No active live stream found`/`not_live`; record which appears instead of expecting a single `not_live` result. |
+| 6 | PENDING | Chat-disabled live stream gives `chat_disabled` (both providers) | **Official API**: connect to a live broadcast with chat off; it has started but has no active chat ID, so the dock shows `Live chat is disabled for this stream`. **No-key**: the same stream's watch page has no chat renderer and shows the same message. No repeated retries in either mode. |
+| 7 | PENDING | Stream ends: `ended`, no crash, no orphan helper | While connected to a live stream, let it end (or use a stream ending during the test). Dock shows `Stream ended`; OBS stays responsive. Then `pgrep -af 'ytchat-helper\|espeak-ng'` shows no helper for that stream. |
+| 8 | PENDING | High-volume chat stays bounded with a drop summary | Connect to a busy live chat (not a replay) for at least 5 minutes. Dock queue count never exceeds **Queue limit**; memory stays flat. Within about 10 s of drops/evictions the log contains the periodic summary, e.g. `tts: filter dropped 12 message(s) (global-cooldown 7, user-cooldown 5); queue evicted 4 message(s)`, rather than one line per dropped message. `for i in $(seq 1 12); do ps -o rss= -p "$(pgrep -f ytchat-helper)"; sleep 5; done` |
+| 9 | PENDING | Long / emoji-only / URL-only / blocklisted messages | Send or observe messages longer than **Max length**, emoji-only, URL-only, and one containing a blocklisted phrase. Long messages are truncated, emoji-only/URL-only/blocklisted are skipped as configured, normal messages still speak. The next drop summary names the filter reasons. |
 | 10 | PENDING | OBS exit while connected leaves no processes | While connected and speaking, **File → Exit**. `pgrep -af 'ytchat-helper\|espeak-ng'` prints nothing; no crash dialog; `grep -i 'crash\|segfault' "$LOG"` is clean. |
 | 11 | PENDING | Scene switch, source removal, source re-add | Switch between two scenes (source added to all scenes via the dock), then remove the `YouTube Chat TTS` source in the Audio Mixer and add it again with **Sources → +**. OBS does not crash; later messages are audible again; old speech is not replayed. |
 | 12 | PENDING | Recording contains the TTS audio | Add the source, click **Test Voice**, record 10 s via **Start Recording**. Play the file and confirm speech is audible; optionally: `ffprobe -v error -show_entries stream=index,codec_type,channels -of compact <recording>` and `ffmpeg -i <recording> -af volumedetect -f null -` (mean volume must not be `-inf`). |
@@ -108,8 +149,12 @@ Record the actual result and date next to each item when executed.
 | 14 | PENDING | Bad key on `Official API` shows `auth`, no retry storm | Set **Provider = Official API**, paste an invalid key. Dock shows `API key rejected; check the key and API restrictions`; no fallback occurs in this mode; log does not loop. |
 | 15 | PENDING | Quota error is clear and does not spin | With an exhausted project quota (or a restricted key), connect with `Official API`. Dock shows `YouTube quota exceeded; try No-key or wait until midnight PT`; no tight retry loop. |
 | 16 | PENDING | API key never appears in logs or argv | After items 2–4: `grep -R '<first 6 chars of key>' "$LOG"` and the dock log contain nothing; `pgrep -af ytchat-helper` shows no key argument (the key is passed on stdin). |
+| 17 | PENDING | Settings persist across an OBS restart | Change voice, rate, filtering and URL; exit OBS; restart. The dock shows the saved values and **Connect automatically** still works if enabled; settings are read from `.../plugin_config/yt-chat-tts/settings.json`. |
+| 18 | PENDING | Password field does not reveal the saved key | After saving a key and restarting, the **API key** field is visually masked (password echo); the plaintext key is not shown in the dock, log, or window title. |
+| 19 | PENDING | Dock log is capped at 500 lines and clears | Generate more than 500 log lines (busy chat or repeated status changes). The **Log** pane keeps at most 500 lines; **Clear Log** empties it immediately while OBS keeps running. |
+| 20 | PENDING | Voice and rate changes are audible without reconnecting | While connected, change **Voice** and **Rate**. The next utterance uses the new values, the connection stays `Connected (…)`, and queued messages are not lost. |
 
-## 3. Release steps
+## 4. Release steps
 
 - [x] CMake project version is `0.1.0`.
 - [x] Helper `--version` reports `0.1.0`.
@@ -117,19 +162,26 @@ Record the actual result and date next to each item when executed.
 - [x] Flatpak manifest installs module, locale, helper, espeak-ng runtime,
       metainfo, licenses and third-party notices.
 - [ ] **Tag `v0.1.0` — pending live E2E acceptance.** Do not create the tag
-      until Section 2 is executed and its results are recorded here.
+      until Section 3 is executed and its results are recorded here.
       When it passes:
       ```bash
       git tag -a v0.1.0 -m "v0.1.0: Flatpak YouTube chat TTS"
       ```
       There is no remote configured; do not push.
-- [ ] Record the Section 2 results and the tagged commit in this file before
+- [ ] Record the Section 3 results and the tagged commit in this file before
       calling the release done.
 
-## 4. Not claimed by this checklist
+## 5. Known limitations and not claimed
 
+- **UI responsiveness:** `ChatClient` starts and stops the helper synchronously
+  on the OBS UI thread, and engine-setting changes restart the speech worker.
+  Connecting can block briefly while the helper starts; disconnecting or
+  unloading can wait for process termination. A hung helper can delay OBS for up
+  to a few seconds (5 s start wait plus up to 2 s terminate and 2 s kill grace).
+  This is known inherited debt, not fixed in v0.1.0.
 - Official `streamList` access to public chats not owned by the API key is
   unverified; the no-key provider remains the documented fallback.
-- InnerTube is unofficial and may break at any time.
-- No interactive OBS item was executed during Task 12 because the user's OBS
-  session was in use.
+- InnerTube is unofficial and may break at any time. Live-chat replay is
+  intentionally unsupported: past VODs are rejected as `not_live`.
+- No interactive OBS item was executed during Task 12/its fix wave because the
+  user's OBS session was in use.

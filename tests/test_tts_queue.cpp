@@ -28,6 +28,7 @@ private slots:
     void ignoresDuplicateIds();
     void snapshotReturnsPopOrder();
     void clearEmptiesQueue();
+    void countsEvictions();
 };
 
 void TestTtsQueue::TestTtsQueueOrder()
@@ -123,6 +124,26 @@ void TestTtsQueue::clearEmptiesQueue()
 
     ChatMessage out;
     QVERIFY(!queue.pop(&out, 10ms));
+}
+
+void TestTtsQueue::countsEvictions()
+{
+    TtsQueue queue;
+    QCOMPARE(queue.evictionCount(), uint64_t(0));
+
+    queue.setLimit(2);
+    queue.push(makeMessage(QStringLiteral("A")), 0);
+    queue.push(makeMessage(QStringLiteral("B")), 0);
+    queue.push(makeMessage(QStringLiteral("C")), 0);
+    QCOMPARE(queue.evictionCount(), uint64_t(1));
+
+    /* Shrinking the limit evicts by the same rule and is counted too. */
+    queue.setLimit(1);
+    QCOMPARE(queue.evictionCount(), uint64_t(2));
+
+    /* clear() is a user action, not an eviction. */
+    queue.clear();
+    QCOMPARE(queue.evictionCount(), uint64_t(2));
 }
 
 QTEST_GUILESS_MAIN(TestTtsQueue)

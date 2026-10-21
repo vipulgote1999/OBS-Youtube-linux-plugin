@@ -27,6 +27,9 @@ public:
     size_t size() const;
     std::vector<ChatMessage> snapshot(size_t max) const;
 
+    /* Monotonic count of messages dropped by limit/shrink eviction. */
+    uint64_t evictionCount() const;
+
 private:
     struct Item {
         ChatMessage msg;
@@ -44,4 +47,5 @@ private:
     std::deque<Item> items_;
     size_t limit_ = 25;
     uint64_t nextSeq_ = 0;
+    uint64_t evicted_ = 0;
 };

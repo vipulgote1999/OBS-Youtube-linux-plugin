@@ -78,7 +78,7 @@ set(YTCHAT_LICENSE_DIR "share/licenses/com.obsproject.Studio.Plugin.YtChatTts")
 install(FILES LICENSE THIRD_PARTY_NOTICES.md
     DESTINATION ${YTCHAT_LICENSE_DIR}
 )
-install(FILES LICENSES/espeak-ng.txt
+install(DIRECTORY LICENSES/
     DESTINATION ${YTCHAT_LICENSE_DIR}/LICENSES
 )
 

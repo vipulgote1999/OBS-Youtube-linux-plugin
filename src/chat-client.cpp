@@ -120,6 +120,8 @@ bool ChatClient::start(const ChatConfig &cfg, QString *error)
     discardProcess();
     buffer_.clear();
     userStopped_ = false;
+    lastEventWasError_ = false;
+    endedSeen_ = false;
 
     QString helperPath = cfg.helperPath;
     if (helperPath.isEmpty())
@@ -210,8 +212,17 @@ void ChatClient::onReadyRead()
     if (!process_)
         return;
 
-    buffer_.append(process_->readAllStandardOutput());
+    processOutput(process_->readAllStandardOutput());
+}
 
+void ChatClient::processOutput(const QByteArray &data)
+{
+    buffer_.append(data);
+    processBuffer();
+}
+
+void ChatClient::processBuffer()
+{
     qsizetype newline = -1;
     while ((newline = buffer_.indexOf('\n')) >= 0) {
         QByteArray line = buffer_.left(newline);
@@ -223,11 +234,13 @@ void ChatClient::onReadyRead()
 
         ChatEvent event;
         QString error;
-        if (parseLine(line, &event, &error))
+        if (parseLine(line, &event, &error)) {
+            trackHelperEvent(event);
             emit eventReceived(event);
-        else
+        } else {
             emitStatus(QStringLiteral("log"),
                        QStringLiteral("ignored malformed helper output: ") + error);
+        }
     }
 
     if (buffer_.size() > kMaxBufferBytes) {
@@ -238,6 +251,24 @@ void ChatClient::onReadyRead()
         event.detail = QStringLiteral("helper output exceeded 1 MiB without a line break");
         event.fatal = false;
         emit eventReceived(event);
+    }
+}
+
+void ChatClient::trackHelperEvent(const ChatEvent &event)
+{
+    switch (event.type) {
+    case ChatEvent::Type::Error:
+        lastEventWasError_ = true;
+        endedSeen_ = false;
+        break;
+    case ChatEvent::Type::Status:
+        lastEventWasError_ = false;
+        endedSeen_ = event.state == QLatin1String("ended");
+        break;
+    case ChatEvent::Type::Message:
+        lastEventWasError_ = false;
+        endedSeen_ = false;
+        break;
     }
 }
 
@@ -258,21 +289,34 @@ void ChatClient::onReadyReadStandardError()
 
 void ChatClient::onFinished(int exitCode, QProcess::ExitStatus exitStatus)
 {
-    Q_UNUSED(exitStatus)
-
     QProcess *finished = process_;
+
+    /* The helper's final JSON line can arrive in the same event-loop turn as
+     * finished().  Drain stdout before deciding so a terminal error is never
+     * replaced by helper_exited/ended. */
+    if (finished)
+        processOutput(finished->readAllStandardOutput());
+
     process_ = nullptr;
     buffer_.clear();
 
     const bool wasUserStopped = userStopped_;
+    const bool errorWasFinal = lastEventWasError_;
+    const bool alreadyEnded = endedSeen_;
     userStopped_ = false;
+    lastEventWasError_ = false;
+    endedSeen_ = false;
 
-    if (!wasUserStopped) {
-        if (exitCode == 0)
-            emitStatus(QStringLiteral("ended"), QStringLiteral("helper exited"));
-        else
+    if (!wasUserStopped && !errorWasFinal) {
+        if (exitStatus == QProcess::CrashExit) {
+            emitError(QStringLiteral("helper_crashed"),
+                      QStringLiteral("helper crashed (exit code %1)").arg(exitCode), true);
+        } else if (exitCode != 0) {
             emitError(QStringLiteral("helper_exited"),
                       QStringLiteral("helper exited with code %1").arg(exitCode), true);
+        } else if (!alreadyEnded) {
+            emitStatus(QStringLiteral("ended"), QStringLiteral("helper exited"));
+        }
     }
 
     /* deleteLater(), not delete: this slot may run inside a signal emitted by

@@ -75,6 +75,8 @@ type videoListResponse struct {
 		ID                   string `json:"id"`
 		LiveStreamingDetails struct {
 			ActiveLiveChatID string `json:"activeLiveChatId"`
+			ActualStartTime  string `json:"actualStartTime"`
+			ActualEndTime    string `json:"actualEndTime"`
 		} `json:"liveStreamingDetails"`
 	} `json:"items"`
 }
@@ -231,13 +233,28 @@ func (a *restClient) activeLiveChatID(ctx context.Context, videoID string) (stri
 		return "", err
 	}
 	for _, item := range resp.Items {
-		if item.LiveStreamingDetails.ActiveLiveChatID != "" {
-			return item.LiveStreamingDetails.ActiveLiveChatID, nil
+		details := item.LiveStreamingDetails
+		if details.ActiveLiveChatID != "" {
+			return details.ActiveLiveChatID, nil
+		}
+		/* A live broadcast with chat turned off has started but not ended.
+		 * Report that state precisely instead of calling it not live. */
+		if details.ActualStartTime != "" && details.ActualEndTime == "" {
+			return "", &Error{
+				Code:    CodeChatDisabled,
+				Message: fmt.Sprintf("video %s is live but live chat is disabled", videoID),
+				Fatal:   true,
+			}
+		}
+		return "", &Error{
+			Code:    CodeNotLive,
+			Message: fmt.Sprintf("video %s is not live or has no active live chat", videoID),
+			Fatal:   true,
 		}
 	}
 	return "", &Error{
 		Code:    CodeNotLive,
-		Message: fmt.Sprintf("video %s is not live or has no active live chat", videoID),
+		Message: fmt.Sprintf("video %s was not found", videoID),
 		Fatal:   true,
 	}
 }
