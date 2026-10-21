@@ -15,6 +15,9 @@ add_library(yt-chat-tts MODULE
     src/yt-chat-tts-dock.cpp
     src/chat-client.cpp
     src/paths.cpp
+    src/settings.cpp
+    src/text-normalizer.cpp
+    src/message-filter.cpp
 )
 
 # libobs (and OBS Flatpak plugin extensions) load modules as <name>.so on
@@ -71,4 +74,48 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME test_chat_client COMMAND test_chat_client)
+
+    add_executable(test_settings
+        tests/test_settings.cpp
+        src/settings.cpp
+        src/paths.cpp
+    )
+
+    target_include_directories(test_settings PRIVATE src)
+    target_link_libraries(test_settings PRIVATE
+        OBS::libobs
+        Qt6::Core
+        Qt6::Test
+    )
+
+    add_test(NAME test_settings COMMAND test_settings)
+
+    add_executable(test_text_normalizer
+        tests/test_text_normalizer.cpp
+        src/text-normalizer.cpp
+    )
+
+    target_include_directories(test_text_normalizer PRIVATE src)
+    target_link_libraries(test_text_normalizer PRIVATE
+        OBS::libobs
+        Qt6::Core
+        Qt6::Test
+    )
+
+    add_test(NAME test_text_normalizer COMMAND test_text_normalizer)
+
+    add_executable(test_message_filter
+        tests/test_message_filter.cpp
+        src/message-filter.cpp
+        src/text-normalizer.cpp
+    )
+
+    target_include_directories(test_message_filter PRIVATE src)
+    target_link_libraries(test_message_filter PRIVATE
+        OBS::libobs
+        Qt6::Core
+        Qt6::Test
+    )
+
+    add_test(NAME test_message_filter COMMAND test_message_filter)
 endif()
