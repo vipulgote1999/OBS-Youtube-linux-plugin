@@ -154,6 +154,82 @@ Record the actual result and date next to each item when executed.
 | 19 | PENDING | Dock log is capped at 500 lines and clears | Generate more than 500 log lines (busy chat or repeated status changes). The **Log** pane keeps at most 500 lines; **Clear Log** empties it immediately while OBS keeps running. |
 | 20 | PENDING | Voice and rate changes are audible without reconnecting | While connected, change **Voice** and **Rate**. The next utterance uses the new values, the connection stays `Connected (…)`, and queued messages are not lost. |
 
+## 3a. Piper TTS engine — headless PASS, live OBS PENDING (post-0.1.0)
+
+This section covers the Piper feature on `feature/piper-tts`. It is **not** part
+of the published `v0.1.0` tag and does not modify
+`docs/release-notes-v0.1.0.md`.
+
+**Headless evidence** at the commit that adds this section (the commit itself
+is `feat: bundle piper tts and document acceptance`; the installed Flatpak
+extension used for the sandbox checks was built from the same tree):
+
+| Check | Command | Result |
+| --- | --- | --- |
+| [x] Host C++ tests | `./scripts/test-host.sh` | CTest **11/11 passed**, including `test_piper_engine`, `test_tts_backend` and `test_settings` |
+| [x] Go helper | `cd helper && go test -count=1 ./... && go vet ./...` | All packages pass; `go vet` exit 0 |
+| [x] Flatpak build | `PATH=/tmp/opencode/toolchain/go/bin:$PATH ./scripts/build-flatpak.sh` | Exit 0; extension installed |
+| [x] Installed-layout smoke | `./scripts/smoke-flatpak.sh` | `smoke: extension installed (module, locale, helper, espeak-ng, piper, metainfo, licenses)` |
+| [x] espeak-ng regression | `./scripts/test-espeak-flatpak.sh` | `eSpeak NG text-to-speech: 1.51`; WAV RIFF check passes |
+| [x] Piper synthesis + latency + fallback probes | `./scripts/test-piper-flatpak.sh` | Exit 0; see timings below |
+| [x] No missing shared libraries | `flatpak run --command=sh com.obsproject.Studio -c 'ldd ... \| grep "not found" && exit 1 \|\| true'` | Exit 0 for the module; `ldd` also resolves libpiper/ONNX Runtime |
+| [x] Model and config present in sandbox | same command: `test -f .../piper/en_US-ljspeech-medium.onnx[.json]` | Exit 0 |
+
+Installed assets verified by `smoke-flatpak.sh` and sandbox inspection:
+
+- [x] `/app/plugins/YtChatTts/lib/libpiper.so` and `libonnxruntime.so*`; the
+      installed module links both (`ldd` assertions in the smoke script).
+- [x] `/app/plugins/YtChatTts/share/obs/obs-plugins/yt-chat-tts/piper/`
+      contains `en_US-ljspeech-medium.onnx` (~61 MiB on disk), its
+      `.onnx.json`, and a separate `espeak-ng-data/` (~19 MiB).
+- [x] `en_US-lessac-medium` is absent (not bundled).
+- [x] Piper build-only `bin/piper_exe` and `include/piper.h` are pruned from
+      the installed extension.
+- [x] Licenses installed under
+      `share/licenses/com.obsproject.Studio.Plugin.YtChatTts/LICENSES/`:
+      `piper/COPYING`, `piper/uni_algo-NOTICE.txt`, `onnxruntime/LICENSE`,
+      `onnxruntime/ThirdPartyNotices.txt`, `ljspeech/MODEL_CARD.md`,
+      `espeak-ng-pinned/COPYING`, `espeak-ng-pinned/SOURCE.md`, plus the
+      existing espeak-ng and Go texts.
+- [x] Installed extension size is **139.5 MB** (`flatpak info`), versus the
+      espeak-only extension; the model is ~61 MiB and ONNX Runtime ~21 MiB.
+- [x] The `piper-probe` installed RPATH now resolves the bundled libraries via
+      `$ORIGIN/../../../../../lib`.
+
+Performance (deterministic 200-character phrase, three runs in one process
+after two short warm-up utterances; model loaded once):
+
+| Measurement | Result |
+| --- | --- |
+| Model load + first short utterance (`synthesis=1`) | 662 ms |
+| Second short utterance (`synthesis=2`) | 105 ms |
+| 200-char run 1 (warm-up) | 1184 ms |
+| 200-char run 2 (steady) | 1185 ms |
+| 200-char run 3 (steady) | 1131 ms |
+| Best steady-state run | **1131 ms — under the 1.5 s reference target** |
+| Output format | 22,050 Hz mono float, positive sample counts (268k–271k for 200 chars) |
+
+The model is created on the first utterance and reused for the rest of the
+process; the probe would fail if any run returned a non-22,050 Hz rate or zero
+samples.
+
+**Live OBS acceptance — PENDING.** OBS was not launched and its configuration
+was not touched. Do not mark these passed until an operator runs them and
+records the date and result:
+
+| # | Status | Check | How to run / expected result |
+| --- | --- | --- | --- |
+| P1 | PENDING | Extension reloads with Piper | Restart OBS. Log shows `tts engine: piper (en_US-ljspeech-medium)`, the model/config/data paths, and no error. |
+| P2 | PENDING | Test Voice with Piper | Select **Engine = Piper — natural (CPU)**, click **Test Voice**. Audio Mixer shows a level and the sentence is audible; log has no fallback line. |
+| P3 | PENDING | Rate mapping is audible | Change **Rate** (for example 120 → 300). The next Test Voice utterance changes speed, the queue survives, and the connection (if any) stays up. |
+| P4 | PENDING | Live chat message is spoken with Piper | Connect to a public live chat, confirm real messages are spoken with the natural voice, and no model reload occurs per message (no repeated multi-second stalls). |
+| P5 | PENDING | Engine switch to espeak-ng | While connected, select **espeak-ng — fast fallback**. The next utterance uses the espeak voice; the dock does not reconnect; switching back to Piper works. |
+| P6 | PENDING | Missing-model fallback | In a test build (never the user's install), rename `piper/en_US-ljspeech-medium.onnx` or set an invalid `piperModelPath`, then restart OBS/Test Voice. The dock logs the exact missing path and speaks through espeak-ng; OBS stays responsive. Restore the file afterwards. |
+| P7 | PENDING | Corrupt-model/init fallback | Point `piperModelPath` at a copy of the config or a truncated model. The dock logs a Piper load error and falls back to espeak-ng; no crash, no silence, no retry storm per message. |
+| P8 | PENDING | 200-character latency in OBS | Send/Test Voice a 200-character message. Speech starts promptly after the one-time load; measure wall-clock from queue entry to first audio and record it. The headless reference is 1.13 s steady-state on this CPU. |
+| P9 | PENDING | CPU and memory observation | During a busy chat with Piper selected, record OBS CPU and RSS for at least 5 minutes (`ps -o %cpu,rss -p "$(pgrep -f obs)"`). Memory should stay flat after the model load; CPU should track message volume, not grow per message. |
+| P10 | PENDING | No library/process leaks after exit | While connected and speaking, **File → Exit**. `pgrep -af 'ytchat-helper\|espeak-ng\|piper'` prints nothing; no crash; no `not found`/library errors in the OBS log. |
+
 ## 4. Release steps
 
 - [x] CMake project version is `0.1.0`.

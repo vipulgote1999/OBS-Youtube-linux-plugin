@@ -1,9 +1,11 @@
 # OBS YouTube Chat TTS
 
-A Flatpak extension for OBS Studio that reads YouTube live chat aloud with the
-bundled offline [espeak-ng](https://github.com/espeak-ng/espeak-ng) engine and
-mixes the synthesized speech into OBS as a native audio source. There is no
-cloud TTS, no virtual audio cable and no Python inside OBS.
+A Flatpak extension for OBS Studio that reads YouTube live chat aloud with a
+bundled offline neural [Piper](https://github.com/OHF-Voice/piper1-gpl) voice
+(CPU-only) and mixes the synthesized speech into OBS as a native audio source.
+The bundled [espeak-ng](https://github.com/espeak-ng/espeak-ng) engine remains
+available and is the automatic fallback. There is no cloud TTS, no virtual
+audio cable and no Python inside OBS.
 
 The extension is a C++17/Qt 6 OBS module built inside the
 `org.freedesktop.Sdk//25.08` sandbox and installed as
@@ -22,8 +24,15 @@ the experimental keyless InnerTube provider.
 - **Auto mode**: official first when a key is configured, with a visible
   warning and fallback to InnerTube on a pre-connection auth, quota or network
   failure.
-- **Offline speech** through a statically linked espeak-ng 1.51 executable;
-  the audio is fed to a native OBS input source named `YouTube Chat TTS`.
+- **Offline neural speech** through a bundled Piper `libpiper` + ONNX Runtime
+  runtime and the public-domain `en_US-ljspeech-medium` voice. Synthesis is
+  CPU-only and the model is loaded once per worker, not per message.
+- **Engine selector**: `Piper — natural (CPU)` (default) or
+  `espeak-ng — fast fallback`; the audio is fed to a native OBS input source
+  named `YouTube Chat TTS`.
+- **espeak-ng fallback** through the bundled 1.51 executable whenever the Piper
+  model/config/espeak data is missing or corrupt, or Piper initialization
+  fails after the plugin has loaded. The dock logs the reason.
 - **Filtering**: max length, per-user and global cooldowns, command prefix,
   URL stripping, blocklisted phrases, Super Chats, new members, moderators.
 - **Bounded queue** (default 25, configurable 1–100) with Skip Current and
@@ -56,6 +65,12 @@ the experimental keyless InnerTube provider.
 The first SDK install is a large one-time download. The SDK is not vendored in
 this repository.
 
+Piper needs no GPU or CUDA and no runtime network access, but it makes the
+extension much larger: the LJSpeech model is about 63 MB, ONNX Runtime adds
+about 21 MB of shared libraries, and the installed extension is roughly
+100–140 MB instead of the espeak-only size. Those files are bundled so the
+extension stays offline and self-contained.
+
 ## Build, install and verify
 
 ```bash
@@ -63,6 +78,7 @@ this repository.
 ./scripts/build-flatpak.sh     # reruns build-helper.sh, then installs the extension
 ./scripts/smoke-flatpak.sh     # checks the installed extension inside the sandbox
 ./scripts/test-espeak-flatpak.sh
+./scripts/test-piper-flatpak.sh # Piper synthesis, 200-character latency, fallback probes
 ```
 
 `build-flatpak.sh` refuses to start the Flatpak build if `dist/ytchat-helper`
@@ -78,15 +94,21 @@ rm -rf build build-flatpak dist
 ./scripts/build-flatpak.sh
 ./scripts/smoke-flatpak.sh
 ./scripts/test-espeak-flatpak.sh
+./scripts/test-piper-flatpak.sh
 ./scripts/test-host.sh
 ```
 
 `smoke-flatpak.sh` verifies, inside the OBS sandbox, that the module and
 locale, the executable helper (`ytchat-helper --version`), the espeak-ng
-binary and data, the AppStream metainfo and the license/notice files are all
-present, and that neither the module nor espeak-ng has a missing shared
-library. `test-espeak-flatpak.sh` additionally synthesizes speech to a WAV and
-checks its RIFF header.
+binary and data, libpiper/ONNX Runtime, the LJSpeech model and config, the
+AppStream metainfo and the license/notice files are all present, that the
+module actually links the bundled Piper runtime, and that no installed binary
+has a missing shared library. `test-espeak-flatpak.sh` synthesizes speech to a
+WAV and checks its RIFF header. `test-piper-flatpak.sh` synthesizes through the
+raw C API and the shipped engine, runs a deterministic 200-character phrase
+three times, reports first and steady-state timings (the best steady-state run
+must be under 1.5 s on the reference CPU), and checks the cancellation and
+missing-config error paths.
 
 After installing or rebuilding the extension, **restart OBS** (or use
 *File → Exit* and start it again): a running instance keeps the extension it
@@ -144,10 +166,10 @@ Open **Docks → YouTube Chat TTS**.
    from `not added (audio will be silent)` to `added`. You can also add a
    source manually with **Sources → + → YouTube Chat TTS**; the plugin does not
    create a second copy if one already exists.
-2. Set **Voice**, **Rate**, **Pitch**, **Amplitude** and **Volume**. **Test
-   Voice** speaks a test sentence through the audio source, so use it to check
-   levels and recording before going live. With no source added, Test Voice is
-   buffered but silent; the dock warns about that.
+2. Set **Engine**, **Voice**, **Rate**, **Pitch**, **Amplitude** and **Volume**.
+   **Test Voice** speaks a test sentence through the audio source, so use it to
+   check levels and recording before going live. With no source added, Test
+   Voice is buffered but silent; the dock warns about that.
 3. Paste a YouTube video URL or 11-character video ID, or a channel URL/handle
    that currently has a live stream, into **Video**.
 4. Choose a **Provider** (see below) and, for the official provider, an API
@@ -163,6 +185,39 @@ Open **Docks → YouTube Chat TTS**.
 queued messages (the sentence already playing may finish); **Clear Queue**
 empties the queue. **Clear Log** clears the dock's log pane only; the OBS log
 file is unaffected.
+
+### Speech engines, voice and rate
+
+The **Engine** selector has two entries:
+
+| Engine | Voice | Notes |
+| --- | --- | --- |
+| `Piper — natural (CPU)` (default) | `LJSpeech — US female (medium)` | Bundled `en_US-ljspeech-medium` model, 22,050 Hz mono float, public-domain LJ Speech dataset. CPU-only; the model is loaded once per worker. |
+| `espeak-ng — fast fallback` | Existing espeak-ng English voices | Small and fast; robotic formant synthesis. |
+
+Only the LJSpeech Piper voice is bundled. The commonly suggested
+`en_US-lessac-medium` voice is **not** included because its Lessac/Blizzard
+dataset license is research-only and cannot be redistributed in a public
+release. Adding another voice is not supported in this version.
+
+How the controls apply:
+
+- **Rate** is engine-specific. For Piper it maps to the model's `length_scale`
+  as `165 / rate`, clamped to `0.5–2.0`; the UI's 80–450 range therefore stays
+  valid and higher values speak faster. The rate is baked into the speech
+  worker, so changing it restarts that worker while keeping the queue.
+- **Pitch** and **Amplitude** are espeak-only. They are disabled (greyed) for
+  Piper with an explanatory tooltip; the model has no pitch/amplitude controls.
+- **Volume** still applies to both engines and is owned by the audio buffer.
+- Changing **Engine** or **Voice** restarts the speech worker so the next
+  utterance uses the new selection; the chat connection is not dropped.
+
+If the bundled Piper model, config or Piper espeak data is missing or corrupt,
+or Piper fails to initialize after the plugin has loaded, the dock logs the
+exact reason and speaks through espeak-ng instead. It never goes silent. A
+module that is missing libpiper/ONNX Runtime is a broken/incomplete package:
+`./scripts/smoke-flatpak.sh` fails rather than treating that as an espeak-only
+mode.
 
 ### Audio source and recording
 
@@ -241,7 +296,8 @@ owned/OAuth-authorized setup.
 - Chat messages are processed locally and spoken locally. This plugin does not
   send messages, moderate users, or authenticate as your YouTube account, and
   it does not upload chat content anywhere.
-- The speech engine (espeak-ng) runs offline inside the Flatpak sandbox.
+- Both speech engines (Piper/ONNX Runtime and espeak-ng) run offline inside the
+  Flatpak sandbox. Piper adds no network calls and no telemetry.
 - API keys are stored in the owner-only settings file, are never written to the
   dock log or OBS log, and are never passed on a command line.
 - Only public live chat that the provider can read is accessed. Do not use the
@@ -265,7 +321,10 @@ dock's **Log** pane mirrors the important status and error lines.
 | `YouTube response changed; try the other provider` | The experimental provider's parsing no longer matches YouTube. Switch to the official provider (or update the plugin). |
 | `Network error; retrying` | Transient DNS/TLS/transport problem; wait for the capped backoff. If it persists, check connectivity to `youtube.googleapis.com` and the gRPC endpoint. |
 | Helper not found / chat never connects | Rebuild with `./scripts/build-helper.sh && ./scripts/build-flatpak.sh`; the Flatpak build now refuses to proceed without the helper. |
-| Audio stutters or lags behind chat | Lower the message rate/size filters, shorten **Max length**, or raise the **Queue limit** cautiously. espeak-ng synthesis is CPU-bound. |
+| Audio stutters or lags behind chat | Lower the message rate/size filters, shorten **Max length**, or raise the **Queue limit** cautiously. Both engines are CPU-bound; Piper is more expensive per character. |
+| Spoken voice is robotic, not the natural voice | **Engine** is set to espeak-ng, or the dock logged a Piper fallback reason. Select `Piper — natural (CPU)` and fix the reported missing/corrupt model or initialization error. |
+| Dock logs a Piper fallback or `piper model not found` | The extension is incomplete or a custom `piperModelPath`/`piperConfigPath` is wrong. Reinstall with `./scripts/build-flatpak.sh`, run `./scripts/smoke-flatpak.sh`, and clear the path overrides. |
+| Piper is slow on old hardware | Piper is CPU-only and the model is 61 MB. Use espeak-ng, shorten **Max length**, or reduce chat volume. The 200-character reference target is under 1.5 s steady-state after the model load. |
 | Rebuild fails after an OBS update | OBS/runtime ABI changes require rebuilding the extension. Run the clean rebuild commands above. |
 | Build fails with a mount or busy error | A previous Flatpak build mount is stale. `flatpak kill com.obsproject.Studio`, remove any leftover `build-flatpak` directory, and rerun `scripts/build-flatpak.sh`. Do not delete `~/.var/app/com.obsproject.Studio`. |
 
@@ -284,14 +343,16 @@ CXXFLAGS="-I/path/to/obs/include" ./scripts/test-host.sh
 
 `./scripts/test-host.sh` builds and runs the C++ unit tests with CTest (chat
 client/JSONL parsing, settings and file mode, text normalization, message
-filtering, bounded queue, WAV parsing, espeak engine, audio buffer, TTS worker)
+filtering, bounded queue, WAV parsing, espeak engine, Piper engine rate
+mapping/cancellation/error paths, backend selection, audio buffer, TTS worker)
 and then runs `go test ./...` and `go vet ./...` for the helper.
 
 Flatpak-side checks:
 
 ```bash
-./scripts/smoke-flatpak.sh          # installed layout, helper, espeak, licenses, ldd
+./scripts/smoke-flatpak.sh          # layout, helper, espeak, Piper/ONNX, model, licenses, ldd
 ./scripts/test-espeak-flatpak.sh    # espeak-ng runs inside the sandbox
+./scripts/test-piper-flatpak.sh     # real Piper synthesis, 200-char latency, error paths
 ```
 
 Manual sandbox inspection:
@@ -325,14 +386,24 @@ Inside the extension prefix `/app/plugins/YtChatTts`:
 
 ```text
 lib/obs-plugins/yt-chat-tts.so                              OBS module
+lib/libpiper.so                                             bundled Piper library
+lib/libonnxruntime.so*                                      bundled ONNX Runtime (CPU)
 share/obs/obs-plugins/yt-chat-tts/locale/en-US.ini          dock strings
 share/obs/obs-plugins/yt-chat-tts/bin/ytchat-helper         bundled chat helper
-share/obs/obs-plugins/yt-chat-tts/bin/espeak-ng             bundled speech engine
-share/obs/obs-plugins/yt-chat-tts/espeak-ng-data/           voices and dictionaries
+share/obs/obs-plugins/yt-chat-tts/bin/espeak-ng             bundled espeak-ng fallback
+share/obs/obs-plugins/yt-chat-tts/bin/piper-probe           packaging/latency probe
+share/obs/obs-plugins/yt-chat-tts/espeak-ng-data/           espeak-ng voices and dictionaries
+share/obs/obs-plugins/yt-chat-tts/piper/en_US-ljspeech-medium.onnx
+share/obs/obs-plugins/yt-chat-tts/piper/en_US-ljspeech-medium.onnx.json
+share/obs/obs-plugins/yt-chat-tts/piper/espeak-ng-data/     data for the pinned libpiper espeak-ng
 share/metainfo/com.obsproject.Studio.Plugin.YtChatTts.metainfo.xml
 share/licenses/com.obsproject.Studio.Plugin.YtChatTts/LICENSE
 share/licenses/com.obsproject.Studio.Plugin.YtChatTts/THIRD_PARTY_NOTICES.md
 share/licenses/com.obsproject.Studio.Plugin.YtChatTts/LICENSES/espeak-ng.txt
+share/licenses/com.obsproject.Studio.Plugin.YtChatTts/LICENSES/espeak-ng-pinned/
+share/licenses/com.obsproject.Studio.Plugin.YtChatTts/LICENSES/ljspeech/MODEL_CARD.md
+share/licenses/com.obsproject.Studio.Plugin.YtChatTts/LICENSES/onnxruntime/
+share/licenses/com.obsproject.Studio.Plugin.YtChatTts/LICENSES/piper/
 share/licenses/com.obsproject.Studio.Plugin.YtChatTts/LICENSES/go/
 ```
 
@@ -340,14 +411,30 @@ The espeak-ng executable is statically linked against its own library and has
 no `libespeak-ng.so` dependency. It is invoked as a separate process with
 `ESPEAK_DATA_PATH` pointing at the bundled data directory. Build-only espeak-ng
 headers, static libraries, pkg-config files and vim/man documentation are
-removed by the manifest and are not shipped.
+removed by the manifest and are not shipped. Piper's `piper_exe` and
+`piper.h` are also build-only and pruned from the installed extension; the
+plugin links `libpiper.so`/`libonnxruntime.so` directly.
+
+The `piper-probe` binary is a packaged diagnostic/test tool used by
+`scripts/test-piper-flatpak.sh`. It synthesizes through the raw C API and the
+shipped engine, prints sample rate/sample counts and 200-character timings, and
+exercises cancellation and missing-config error paths.
 
 ## Limitations
 
-- espeak-ng is a formant synthesizer and sounds robotic; it was chosen for v1
-  to avoid a cloud dependency. The `TtsEngine` interface allows a future
-  engine (for example Piper) without changing the chat pipeline.
-- The bundled voice set is English (US) plus the other English voices shipped
+- Piper is CPU-only and adds about 63 MB of model data plus ONNX Runtime to the
+  extension (roughly 100–140 MB installed). Synthesis is much faster than
+  real time on a typical desktop CPU after the one-time model load, but it is
+  heavier per character than espeak-ng on very low-end hardware.
+- Only one Piper voice is bundled: `en_US-ljspeech-medium` (US English female,
+  public-domain LJ Speech dataset). `en_US-lessac-medium` is not bundled
+  because its dataset license is research-only. Multiple/downloadable Piper
+  voices are out of scope.
+- Pitch and amplitude controls do not apply to Piper; they remain espeak-ng
+  options and are disabled while Piper is selected.
+- espeak-ng remains the fallback and is a formant synthesizer, so it sounds
+  robotic. It is also the lighter option for low-end machines.
+- The espeak voice set is English (US) plus the other English voices shipped
   by espeak-ng (`en-us`, `en-gb`, `en-in`, `en-gb-scotland`, `en-029`, and any
   custom espeak-ng voice name you type).
 - Only public live chat readable by the selected provider is supported. The
@@ -373,6 +460,11 @@ removed by the manifest and are not shipped.
 official and experimental chat providers, espeak-ng audio source, filtering,
 queue and persisted settings. The `v0.1.0` release tag is pending completion of
 the live acceptance matrix; see `docs/acceptance-checklist.md`.
+
+The Piper engine described in this README is developed on
+`feature/piper-tts` for a later release. It is not part of the published
+`v0.1.0` tag; live OBS acceptance for Piper is still pending and is tracked in
+the acceptance checklist.
 
 ## License
 

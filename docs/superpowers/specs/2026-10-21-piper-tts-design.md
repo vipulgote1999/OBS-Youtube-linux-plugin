@@ -26,9 +26,17 @@ not an error. The author handle is spoken only when "read author" is enabled.
 - **Packaging:** bundle Piper, ONNX Runtime, the model, and all licenses in the
   Flatpak extension. Roughly 63 MB of model data plus the Piper/ONNX runtime
   libraries; expected extension growth around 90–140 MB.
-- **Fallback:** if Piper is unavailable or cannot load, use espeak-ng and log a
-  clear message. A failed Piper synthesis reports an error and continues with
-  later messages; it does not silently switch engines mid-utterance.
+- **Fallback:** after the plugin has loaded, espeak-ng is the fallback when the
+  bundled model/config/espeak data is missing or corrupt, or when Piper
+  initialization fails; the dock logs a clear reason. A failed Piper synthesis
+  reports an error and continues with later messages; it does not silently
+  switch engines mid-utterance.
+- **Packaging integrity is not a fallback:** the plugin must link the bundled
+  `libpiper` and ONNX Runtime. A module or extension that is missing either
+  library, or that was built without them, is a packaging-integrity failure and
+  must fail the build/smoke checks; it is not a supported espeak-only runtime
+  mode. Missing/corrupt model data after a successful plugin load is the case
+  the runtime fallback covers.
 - **Audio contract:** Piper returns float32 mono at 22,050 Hz. No resampling is
   expected for this voice; if a future model reports another rate, it is
   rejected with a descriptive error.
@@ -64,10 +72,12 @@ Controls and behavior:
 Add:
 
 - `ttsEngine` — `piper` or `espeak`; default `piper` for new and existing
-  settings. If Piper is unavailable, the runtime falls back to espeak and logs
-  the reason; the setting remains `piper` so the user can fix the installation
-  and use Piper again. Users can explicitly select espeak to avoid loading
-  Piper.
+  settings. If the Piper model/config after plugin load is unavailable or
+  fails to initialize, the runtime falls back to espeak and logs the reason;
+  the setting remains `piper` so the user can fix the installation and use
+  Piper again. A plugin that never linked `libpiper`/ONNX Runtime is a
+  packaging failure, not this fallback path. Users can explicitly select
+  espeak to avoid loading Piper.
 - `piperVoice` — bundled voice id, initially `en_US-ljspeech-medium`.
 - `piperModelPath` / `piperConfigPath` — optional overrides; empty means resolve
   the bundled paths.
@@ -94,9 +104,12 @@ ChatClient -> MessageFilter -> TtsQueue -> TtsWorker -> PiperEngine -> AudioBuff
 - Do not modify `TtsQueue`, `AudioBuffer`, the OBS source, or the chat/filter
   path except for engine selection and the rate mapping.
 - `PluginContext::ensureWorker()` resolves the Piper model/config and espeak
-  data through the existing `paths.cpp` resolver. If any required path or
-  `libpiper` initialization is unavailable, it creates `EspeakEngine` and logs
-  the exact missing path.
+  data through the existing `paths.cpp` resolver. If the model, config, or
+  Piper espeak data is missing, or `libpiper` initialization fails after the
+  plugin has loaded, it creates `EspeakEngine` and logs the exact missing path
+  or error. A plugin binary that never linked `libpiper`/ONNX Runtime is a
+  packaging-integrity failure, not a fallback case; `smoke-flatpak.sh` asserts
+  the module's dynamic dependencies.
 - `TtsWorker` continues to own one speech thread. Piper synthesis runs only on
   that thread.
 
@@ -115,7 +128,11 @@ Add a dedicated `piper` Flatpak module built from pinned sources:
   `en_US-ljspeech-medium.onnx` and `.onnx.json`, pinned to a Hugging Face
   revision and SHA-256; install under the extension data directory.
 - Install Piper/ONNX shared libraries where the OBS module can load them, and
-  add `ldd`/smoke checks.
+  add `ldd`/smoke checks. The checks assert that the installed module actually
+  links both libraries: a missing `libpiper`/ONNX Runtime is a
+  packaging-integrity failure, not a runtime fallback path.
+- Prune build-only artifacts (`piper_exe`, headers) from the installed
+  extension after the plugin module has compiled.
 - Add GPL-3.0-or-later Piper notice/source, ONNX Runtime MIT notice, espeak-ng
   GPL notice, and the LJSpeech public-domain model card to
   `THIRD_PARTY_NOTICES.md` / `LICENSES/`.

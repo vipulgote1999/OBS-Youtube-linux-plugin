@@ -2,9 +2,10 @@
 set -euo pipefail
 
 # Verify the installed extension from inside the OBS Flatpak sandbox: the
-# module, locale, bundled helper, bundled espeak-ng runtime, metainfo and
-# license/notice files must all be present, and no shared library may be
-# missing.
+# module, locale, bundled helper, bundled espeak-ng runtime, Piper/ONNX
+# runtime and LJSpeech voice, metainfo and license/notice files must all be
+# present, no shared library may be missing, and the module must actually link
+# the bundled Piper runtime (packaging integrity, not a runtime fallback).
 flatpak run --command=sh com.obsproject.Studio -c '
   set -eu
   PREFIX=/app/plugins/YtChatTts
@@ -36,11 +37,31 @@ flatpak run --command=sh com.obsproject.Studio -c '
   test -e "$LIBPIPER"
   test -e "$ONNXRUNTIME"
 
+  # The bundled voice is exactly LJSpeech; lessac is research-only and must
+  # never ship.  The installed tree also drops Piper build-only files.
+  test ! -e "$DATA/piper/en_US-lessac-medium.onnx"
+  test ! -e "$DATA/piper/en_US-lessac-medium.onnx.json"
+  test ! -e "$PREFIX/bin/piper_exe"
+  test ! -e "$PREFIX/include/piper.h"
+
+  # Hard-link packaging rule: the plugin must be linked against the bundled
+  # Piper/ONNX runtime.  A module built without it is a packaging failure, not
+  # a supported espeak-only runtime mode.
+  ldd "$MODULE" | grep -q 'libpiper\.so'
+  ldd "$MODULE" | grep -q 'libonnxruntime\.so'
+
   test -f "$PREFIX/share/metainfo/com.obsproject.Studio.Plugin.YtChatTts.metainfo.xml"
   test -f "$LICENSES/LICENSE"
   test -f "$LICENSES/THIRD_PARTY_NOTICES.md"
   for license in \
     LICENSES/espeak-ng.txt \
+    LICENSES/espeak-ng-pinned/COPYING \
+    LICENSES/espeak-ng-pinned/SOURCE.md \
+    LICENSES/ljspeech/MODEL_CARD.md \
+    LICENSES/onnxruntime/LICENSE \
+    LICENSES/onnxruntime/ThirdPartyNotices.txt \
+    LICENSES/piper/COPYING \
+    LICENSES/piper/uni_algo-NOTICE.txt \
     LICENSES/go/genproto-LICENSE \
     LICENSES/go/gjson-LICENSE \
     LICENSES/go/grpc-LICENSE \
@@ -58,17 +79,21 @@ flatpak run --command=sh com.obsproject.Studio -c '
     test -f "$LICENSES/$license"
   done
 
+  # ldd on the module resolves the transitive ONNX Runtime dependency too.
   for binary in "$MODULE" "$ESPEAK" "$PROBE" "$LIBPIPER"; do
+    # ldd warns about a symlink without following it cleanly; resolve first.
+    binary="$(readlink -f "$binary")"
     if ldd "$binary" | grep "not found"; then
       echo "smoke: missing shared library for $binary" >&2
       exit 1
     fi
   done
 
-  # Only espeak-ng runtime files belong in the extension; its headers and
-  # static library are build-time artifacts.
+  # Only runtime files belong in the extension.  espeak-ng headers, static
+  # libraries, pkg-config files and piper_exe/piper.h are build-time artifacts.
   test ! -e "$PREFIX/include/espeak-ng"
   test ! -e "$PREFIX/lib/libespeak-ng.a"
+  test ! -e "$PREFIX/lib/pkgconfig/espeak-ng.pc"
 '
 
 echo "smoke: extension installed (module, locale, helper, espeak-ng, piper, metainfo, licenses)"

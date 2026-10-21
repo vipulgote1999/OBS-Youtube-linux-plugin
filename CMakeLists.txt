@@ -144,8 +144,9 @@ if(BUILD_PIPER_PROBE)
         OUTPUT_NAME piper-probe
         # Installed next to the other extension binaries:
         #   <prefix>/share/obs/obs-plugins/yt-chat-tts/bin/piper-probe
-        # Libraries live in <prefix>/lib.
-        INSTALL_RPATH "$ORIGIN/../../../../lib"
+        # Libraries live in <prefix>/lib, five directories up:
+        #   bin -> yt-chat-tts -> obs-plugins -> obs -> share -> <prefix>
+        INSTALL_RPATH "$ORIGIN/../../../../../lib"
         BUILD_RPATH "${PIPER_ROOT}/lib"
     )
     target_include_directories(piper_probe PRIVATE

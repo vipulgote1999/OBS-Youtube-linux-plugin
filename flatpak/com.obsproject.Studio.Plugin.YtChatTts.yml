@@ -56,6 +56,12 @@ modules:
       # espeak-ng CLI so each engine keeps a matching data set.
       - cp -a ${FLATPAK_DEST}/share/espeak-ng-data ${FLATPAK_DEST}/share/obs/obs-plugins/yt-chat-tts/piper/espeak-ng-data
       - rm -rf ${FLATPAK_DEST}/share/espeak-ng-data
+    post-install:
+      # Only libpiper is used at runtime.  The piper_exe command-line tool is
+      # not shipped: the plugin links the library and never spawns a Piper
+      # process.  piper.h stays until the plugin module has compiled against it
+      # (the module's post-install removes it from the final extension).
+      - rm -rf ${FLATPAK_DEST}/bin
     sources:
       - type: archive
         url: https://github.com/OHF-Voice/piper1-gpl/archive/refs/tags/v1.7.0.tar.gz
@@ -92,6 +98,10 @@ modules:
       - -DPIPER_ROOT=/app/plugins/YtChatTts
     post-install:
       - install -Dm644 --target-directory=${FLATPAK_DEST}/share/metainfo ${FLATPAK_BUILDER_BUILDDIR}/${FLATPAK_ID}.metainfo.xml
+      # piper.h is a build-time dependency of this module, not a runtime file.
+      # The piper module installs it so this build can compile, then it is
+      # pruned once the plugin is built.
+      - rm -rf ${FLATPAK_DEST}/include
     sources:
       - type: dir
         path: ..
