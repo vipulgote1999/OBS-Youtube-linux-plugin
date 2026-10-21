@@ -3,7 +3,7 @@
 @@ -35,9 +35,17 @@
      set(UCD_STATIC_LIB ${UCD_TOOLS_DIR}/${UCD_CONFIG_SUBDIR}libucd.a)
  endif()
- 
+
 +# The Flatpak build supplies the pinned espeak-ng source tree.  Do not clone it
 +# or fetch anything at build time: the build must work without network access.
 +if(NOT DEFINED PIPER_ESPEAKNG_SOURCE_DIR)
@@ -32,9 +32,9 @@
          ${ESPEAKNG_STATIC_LIB}
          ${UCD_STATIC_LIB}
 @@ -69,63 +77,11 @@
- 
+
  find_package(onnxruntime QUIET)
- 
+
 -# Look for onnxruntime files in <root>/lib
 +# The Flatpak build supplies a prebuilt, pinned ONNX Runtime tree through
 +# ONNXRUNTIME_DIR.  Never download ONNX Runtime at configure or build time.
@@ -97,7 +97,7 @@
 +    message(FATAL_ERROR
 +        "ONNXRUNTIME_DIR must point at the prebuilt ONNX Runtime tree")
  endif()
- 
+
  if(DEFINED ONNXRUNTIME_DIR)
 --- a/espeak-ng-src/cmake/deps.cmake
 +++ b/espeak-ng-src/cmake/deps.cmake
