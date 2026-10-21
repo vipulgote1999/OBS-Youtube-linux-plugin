@@ -43,6 +43,16 @@ void clampValues(Settings *settings)
         settings->provider != QLatin1String("innertube")) {
         settings->provider = QStringLiteral("auto");
     }
+
+    /* Existing settings files predate ttsEngine; an absent or unrecognised
+     * value falls back to Piper, while an explicit espeak choice is kept. */
+    const QString engine = settings->ttsEngine.trimmed().toLower();
+    settings->ttsEngine =
+        engine == QLatin1String("espeak") ? QStringLiteral("espeak") : QStringLiteral("piper");
+
+    settings->piperVoice = settings->piperVoice.trimmed();
+    if (settings->piperVoice.isEmpty())
+        settings->piperVoice = QStringLiteral("en_US-ljspeech-medium");
 }
 
 QString configFilePath()
@@ -101,6 +111,10 @@ Settings Settings::fromObsData(obs_data_t *data)
     settings.apiKey = readString("apiKey", settings.apiKey);
     settings.videoUrl = readString("videoUrl", settings.videoUrl);
     settings.voice = readString("voice", settings.voice);
+    settings.ttsEngine = readString("ttsEngine", settings.ttsEngine);
+    settings.piperVoice = readString("piperVoice", settings.piperVoice);
+    settings.piperModelPath = readString("piperModelPath", settings.piperModelPath);
+    settings.piperConfigPath = readString("piperConfigPath", settings.piperConfigPath);
     settings.rate = readInt("rate", settings.rate);
     settings.pitch = readInt("pitch", settings.pitch);
     settings.amplitude = readInt("amplitude", settings.amplitude);
@@ -134,6 +148,10 @@ obs_data_t *Settings::toObsData() const
     obs_data_set_string(data, "apiKey", apiKey.toUtf8().constData());
     obs_data_set_string(data, "videoUrl", videoUrl.toUtf8().constData());
     obs_data_set_string(data, "voice", voice.toUtf8().constData());
+    obs_data_set_string(data, "ttsEngine", ttsEngine.toUtf8().constData());
+    obs_data_set_string(data, "piperVoice", piperVoice.toUtf8().constData());
+    obs_data_set_string(data, "piperModelPath", piperModelPath.toUtf8().constData());
+    obs_data_set_string(data, "piperConfigPath", piperConfigPath.toUtf8().constData());
     obs_data_set_int(data, "rate", rate);
     obs_data_set_int(data, "pitch", pitch);
     obs_data_set_int(data, "amplitude", amplitude);

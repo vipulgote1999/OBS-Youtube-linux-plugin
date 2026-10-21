@@ -206,6 +206,19 @@ YtChatTtsDock::YtChatTtsDock(PluginContext *context, QWidget *parent)
     auto *voiceGroup = new QGroupBox(uiText("Voice.Group", "Voice"), settingsWidget);
     auto *voiceForm = new QFormLayout(voiceGroup);
 
+    engineCombo_ = new QComboBox(voiceGroup);
+    engineCombo_->addItem(uiText("Voice.EnginePiper", "Piper — natural (CPU)"),
+                          QStringLiteral("piper"));
+    engineCombo_->addItem(uiText("Voice.EngineEspeak", "espeak-ng — fast fallback"),
+                          QStringLiteral("espeak"));
+    voiceForm->addRow(uiText("Voice.Engine", "Engine"), engineCombo_);
+
+    piperVoiceCombo_ = new QComboBox(voiceGroup);
+    piperVoiceCombo_->addItem(
+        uiText("Voice.PiperVoiceLjspeech", "LJSpeech — US female (medium)"),
+        QStringLiteral("en_US-ljspeech-medium"));
+    voiceForm->addRow(uiText("Voice.PiperVoice", "Piper voice"), piperVoiceCombo_);
+
     voiceCombo_ = new QComboBox(voiceGroup);
     voiceCombo_->setEditable(true);
     voiceCombo_->setInsertPolicy(QComboBox::NoInsert);
@@ -214,7 +227,7 @@ YtChatTtsDock::YtChatTtsDock(PluginContext *context, QWidget *parent)
                            QStringLiteral("en-029")});
     voiceCombo_->lineEdit()->setPlaceholderText(
         uiText("Voice.VoicePlaceholder", "espeak-ng voice, e.g. en-us"));
-    voiceForm->addRow(uiText("Voice.Voice", "Voice"), voiceCombo_);
+    voiceForm->addRow(uiText("Voice.EspeakVoice", "espeak-ng voice"), voiceCombo_);
 
     rateSlider_ = new QSlider(Qt::Horizontal, voiceGroup);
     rateSlider_->setRange(80, 450);
@@ -402,6 +415,7 @@ YtChatTtsDock::YtChatTtsDock(PluginContext *context, QWidget *parent)
      * schedule a save or a worker restart. */
     applySettingsToControls();
     updateValueLabels();
+    logEngineSelection();
     updateSourceStatus();
     refreshQueue();
 
@@ -434,6 +448,10 @@ YtChatTtsDock::YtChatTtsDock(PluginContext *context, QWidget *parent)
     connect(urlEdit_, &QLineEdit::textChanged, this, &YtChatTtsDock::onControlChanged);
     connect(apiKeyEdit_, &QLineEdit::textChanged, this, &YtChatTtsDock::onControlChanged);
     connect(providerCombo_, &QComboBox::currentIndexChanged, this,
+            &YtChatTtsDock::onControlChanged);
+    connect(engineCombo_, &QComboBox::currentIndexChanged, this,
+            &YtChatTtsDock::onControlChanged);
+    connect(piperVoiceCombo_, &QComboBox::currentIndexChanged, this,
             &YtChatTtsDock::onControlChanged);
     connect(voiceCombo_, &QComboBox::currentTextChanged, this,
             &YtChatTtsDock::onControlChanged);
@@ -500,6 +518,19 @@ void YtChatTtsDock::applySettingsToControls()
     apiKeyEdit_->setText(settings.apiKey);
     const int providerIndex = providerCombo_->findData(settings.provider);
     providerCombo_->setCurrentIndex(providerIndex < 0 ? 0 : providerIndex);
+
+    const int engineIndex = engineCombo_->findData(settings.ttsEngine);
+    engineCombo_->setCurrentIndex(engineIndex < 0 ? 0 : engineIndex);
+
+    int piperVoiceIndex = piperVoiceCombo_->findData(settings.piperVoice);
+    if (piperVoiceIndex < 0) {
+        /* Keep a hand-edited voice id selectable instead of silently
+         * replacing it with the bundled default. */
+        piperVoiceCombo_->addItem(settings.piperVoice, settings.piperVoice);
+        piperVoiceIndex = piperVoiceCombo_->count() - 1;
+    }
+    piperVoiceCombo_->setCurrentIndex(piperVoiceIndex);
+
     voiceCombo_->setCurrentText(settings.voice);
     rateSlider_->setValue(settings.rate);
     pitchSlider_->setValue(settings.pitch);
@@ -520,6 +551,7 @@ void YtChatTtsDock::applySettingsToControls()
     speakMembershipsCheck_->setChecked(settings.speakMemberships);
     readModeratorsCheck_->setChecked(settings.readModerators);
     autoConnectCheck_->setChecked(settings.autoConnect);
+    updateEngineControls();
 
     loading_ = false;
 }
@@ -532,6 +564,12 @@ Settings YtChatTtsDock::settingsFromControls() const
     settings.apiKey = apiKeyEdit_->text();
     settings.videoUrl = urlEdit_->text().trimmed();
     settings.voice = voiceCombo_->currentText().trimmed();
+    const QString engine = engineCombo_->currentData().toString();
+    settings.ttsEngine =
+        engine == QLatin1String("espeak") ? QStringLiteral("espeak") : QStringLiteral("piper");
+    settings.piperVoice = piperVoiceCombo_->currentData().toString().trimmed();
+    if (settings.piperVoice.isEmpty())
+        settings.piperVoice = QStringLiteral("en_US-ljspeech-medium");
     settings.rate = rateSlider_->value();
     settings.pitch = pitchSlider_->value();
     settings.amplitude = amplitudeSlider_->value();
@@ -579,8 +617,16 @@ void YtChatTtsDock::onControlChanged()
     updateValueLabels();
 
     QObject *changed = sender();
+    const bool engineSelection = changed == engineCombo_ || changed == piperVoiceCombo_;
     const bool engineControl = changed == voiceCombo_ || changed == rateSlider_ ||
-                               changed == pitchSlider_ || changed == amplitudeSlider_;
+                               changed == pitchSlider_ || changed == amplitudeSlider_ ||
+                               engineSelection;
+    if (engineSelection) {
+        updateEngineControls();
+        /* Coalesce with slider drags: one restart after the user settles on an
+         * engine/voice instead of restarting on every intermediate change. */
+        engineRestartPending_ = true;
+    }
     if (engineControl) {
         liveApplyTimer_->start();
     } else {
@@ -599,6 +645,20 @@ void YtChatTtsDock::applyLiveSettingsNow()
         return;
 
     context_->settings() = settingsFromControls();
+
+    /* The engine is chosen when the worker is created.  Restart first so the
+     * fresh worker bakes in the new engine/voice and records its parameters;
+     * applyLiveSettings() then updates volume/queue limits without a second
+     * restart.  No worker exists before the first connect/test, in which case
+     * restartWorker() creates one. */
+    if (engineRestartPending_) {
+        engineRestartPending_ = false;
+        context_->restartWorker();
+        context_->applyLiveSettings();
+        logEngineSelection();
+        return;
+    }
+
     context_->applyLiveSettings();
 }
 
@@ -737,6 +797,37 @@ void YtChatTtsDock::updateValueLabels()
     amplitudeValueLabel_->setText(QString::number(amplitudeSlider_->value()));
     volumeValueLabel_->setText(
         QString::number(volumeSlider_->value() / 100.0, 'f', 2));
+}
+
+void YtChatTtsDock::updateEngineControls()
+{
+    const bool piper = engineCombo_->currentData().toString() != QLatin1String("espeak");
+
+    /* Each engine keeps its own voice control so switching back and forth
+     * never overwrites the other engine's saved choice. */
+    piperVoiceCombo_->setEnabled(piper);
+    voiceCombo_->setEnabled(!piper);
+
+    /* Piper has no pitch/amplitude knobs; its voice model fixes them. */
+    const QString tooltip =
+        piper ? uiText("Voice.PiperFixedTooltip",
+                       "Pitch and amplitude are fixed for Piper voices.")
+              : QString();
+    pitchSlider_->setEnabled(!piper);
+    amplitudeSlider_->setEnabled(!piper);
+    pitchSlider_->setToolTip(tooltip);
+    amplitudeSlider_->setToolTip(tooltip);
+}
+
+void YtChatTtsDock::logEngineSelection()
+{
+    if (engineCombo_->currentData().toString() == QLatin1String("espeak")) {
+        appendLog(QStringLiteral("tts engine: espeak-ng"));
+        return;
+    }
+
+    appendLog(QStringLiteral("tts engine: piper (") +
+              piperVoiceCombo_->currentData().toString() + QLatin1Char(')'));
 }
 
 void YtChatTtsDock::onStatusChanged(const QString &state, const QString &detail)

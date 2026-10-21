@@ -25,6 +25,10 @@ void compareSettings(const Settings &actual, const Settings &expected)
     QCOMPARE(actual.apiKey, expected.apiKey);
     QCOMPARE(actual.videoUrl, expected.videoUrl);
     QCOMPARE(actual.voice, expected.voice);
+    QCOMPARE(actual.ttsEngine, expected.ttsEngine);
+    QCOMPARE(actual.piperVoice, expected.piperVoice);
+    QCOMPARE(actual.piperModelPath, expected.piperModelPath);
+    QCOMPARE(actual.piperConfigPath, expected.piperConfigPath);
     QCOMPARE(actual.rate, expected.rate);
     QCOMPARE(actual.pitch, expected.pitch);
     QCOMPARE(actual.amplitude, expected.amplitude);
@@ -55,6 +59,10 @@ Settings changedSettings()
     settings.apiKey = QStringLiteral("secret-key");
     settings.videoUrl = QStringLiteral("https://youtu.be/abcdefghijk");
     settings.voice = QStringLiteral("en-gb");
+    settings.ttsEngine = QStringLiteral("espeak");
+    settings.piperVoice = QStringLiteral("en_US-ryan-high");
+    settings.piperModelPath = QStringLiteral("/tmp/piper/ryan.onnx");
+    settings.piperConfigPath = QStringLiteral("/tmp/piper/ryan.onnx.json");
     settings.rate = 200;
     settings.pitch = 60;
     settings.amplitude = 120;
@@ -86,6 +94,8 @@ class TestSettings : public QObject {
 private slots:
     void roundTripsThroughObsData();
     void savesWithOwnerOnlyPermissionsAndReloads();
+    void emptyPiperPathOverridesRoundTrip();
+    void normalizesEngineAndPiperVoice();
     void dockFacingSettingsRoundTripThroughFile();
     void loadsDefaultsForMissingFile();
     void clampsInvalidValues();
@@ -127,6 +137,48 @@ void TestSettings::savesWithOwnerOnlyPermissionsAndReloads()
     compareSettings(restored, original);
 }
 
+void TestSettings::emptyPiperPathOverridesRoundTrip()
+{
+    QTemporaryDir directory;
+    QVERIFY2(directory.isValid(), "temporary directory is not available");
+    const QString path = directory.filePath(QStringLiteral("settings.json"));
+
+    Settings original;
+    original.ttsEngine = QStringLiteral("piper");
+    original.piperVoice = QStringLiteral("en_US-ljspeech-medium");
+    original.piperModelPath.clear();
+    original.piperConfigPath.clear();
+
+    QString error;
+    QVERIFY2(original.saveToFile(path, &error), qPrintable(error));
+    const Settings restored = Settings::loadFromFile(path, &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+
+    QCOMPARE(restored.ttsEngine, QStringLiteral("piper"));
+    QCOMPARE(restored.piperVoice, QStringLiteral("en_US-ljspeech-medium"));
+    QVERIFY(restored.piperModelPath.isEmpty());
+    QVERIFY(restored.piperConfigPath.isEmpty());
+}
+
+void TestSettings::normalizesEngineAndPiperVoice()
+{
+    obs_data_t *data = obs_data_create();
+    obs_data_set_string(data, "ttsEngine", "not-an-engine");
+    obs_data_set_string(data, "piperVoice", "");
+    const Settings invalid = Settings::fromObsData(data);
+    obs_data_release(data);
+
+    QCOMPARE(invalid.ttsEngine, QStringLiteral("piper"));
+    QCOMPARE(invalid.piperVoice, QStringLiteral("en_US-ljspeech-medium"));
+
+    obs_data_t *espeakData = obs_data_create();
+    obs_data_set_string(espeakData, "ttsEngine", "espeak");
+    const Settings espeak = Settings::fromObsData(espeakData);
+    obs_data_release(espeakData);
+
+    QCOMPARE(espeak.ttsEngine, QStringLiteral("espeak"));
+}
+
 void TestSettings::dockFacingSettingsRoundTripThroughFile()
 {
     /* Mirrors the dock path: every control is copied into Settings, written
@@ -142,6 +194,10 @@ void TestSettings::dockFacingSettingsRoundTripThroughFile()
     original.apiKey = QStringLiteral("AIza-dock-test-key");
     original.videoUrl = QStringLiteral("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
     original.voice = QStringLiteral("en-gb-scotland");
+    original.ttsEngine = QStringLiteral("piper");
+    original.piperVoice = QStringLiteral("en_US-ryan-high");
+    original.piperModelPath = QStringLiteral("/tmp/piper/ryan.onnx");
+    original.piperConfigPath = QStringLiteral("/tmp/piper/ryan.onnx.json");
     original.rate = 220;
     original.pitch = 70;
     original.amplitude = 180;
@@ -171,6 +227,10 @@ void TestSettings::dockFacingSettingsRoundTripThroughFile()
     QCOMPARE(restored.apiKey, original.apiKey);
     QCOMPARE(restored.videoUrl, original.videoUrl);
     QCOMPARE(restored.voice, original.voice);
+    QCOMPARE(restored.ttsEngine, original.ttsEngine);
+    QCOMPARE(restored.piperVoice, original.piperVoice);
+    QCOMPARE(restored.piperModelPath, original.piperModelPath);
+    QCOMPARE(restored.piperConfigPath, original.piperConfigPath);
     QCOMPARE(restored.rate, original.rate);
     QCOMPARE(restored.pitch, original.pitch);
     QCOMPARE(restored.amplitude, original.amplitude);
@@ -204,6 +264,10 @@ void TestSettings::loadsDefaultsForMissingFile()
     QVERIFY2(error.isEmpty(), qPrintable(error));
     QCOMPARE(settings.provider, QStringLiteral("auto"));
     QCOMPARE(settings.voice, QStringLiteral("en-us"));
+    QCOMPARE(settings.ttsEngine, QStringLiteral("piper"));
+    QCOMPARE(settings.piperVoice, QStringLiteral("en_US-ljspeech-medium"));
+    QVERIFY(settings.piperModelPath.isEmpty());
+    QVERIFY(settings.piperConfigPath.isEmpty());
     QCOMPARE(settings.rate, 165);
     QCOMPARE(settings.pitch, 50);
     QCOMPARE(settings.amplitude, 150);

@@ -21,6 +21,10 @@ struct Settings {
     QString apiKey;
     QString videoUrl;
     QString voice = QStringLiteral("en-us");
+    QString ttsEngine = QStringLiteral("piper");
+    QString piperVoice = QStringLiteral("en_US-ljspeech-medium");
+    QString piperModelPath;
+    QString piperConfigPath;
     int rate = 165;
     int pitch = 50;
     int amplitude = 150;
