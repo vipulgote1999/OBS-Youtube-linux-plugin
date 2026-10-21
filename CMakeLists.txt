@@ -18,6 +18,9 @@ add_library(yt-chat-tts MODULE
     src/settings.cpp
     src/text-normalizer.cpp
     src/message-filter.cpp
+    src/tts-queue.cpp
+    src/wav.cpp
+    src/espeak-engine.cpp
 )
 
 # libobs (and OBS Flatpak plugin extensions) load modules as <name>.so on
@@ -118,4 +121,50 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME test_message_filter COMMAND test_message_filter)
+
+    add_executable(test_tts_queue
+        tests/test_tts_queue.cpp
+        src/tts-queue.cpp
+    )
+
+    target_include_directories(test_tts_queue PRIVATE src)
+    target_link_libraries(test_tts_queue PRIVATE
+        Qt6::Core
+        Qt6::Test
+    )
+
+    add_test(NAME test_tts_queue COMMAND test_tts_queue)
+
+    add_executable(test_wav
+        tests/test_wav.cpp
+        src/wav.cpp
+    )
+
+    target_include_directories(test_wav PRIVATE src)
+    target_compile_definitions(test_wav PRIVATE
+        TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
+    )
+    target_link_libraries(test_wav PRIVATE
+        Qt6::Core
+        Qt6::Test
+    )
+
+    add_test(NAME test_wav COMMAND test_wav)
+
+    add_executable(test_espeak_engine
+        tests/test_espeak_engine.cpp
+        src/espeak-engine.cpp
+        src/wav.cpp
+    )
+
+    target_include_directories(test_espeak_engine PRIVATE src)
+    target_compile_definitions(test_espeak_engine PRIVATE
+        TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
+    )
+    target_link_libraries(test_espeak_engine PRIVATE
+        Qt6::Core
+        Qt6::Test
+    )
+
+    add_test(NAME test_espeak_engine COMMAND test_espeak_engine)
 endif()
