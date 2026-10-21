@@ -134,6 +134,7 @@ YtChatTtsDock::YtChatTtsDock(PluginContext *context, QWidget *parent)
         valueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         rowLayout->addWidget(valueLabel);
         form->addRow(label, row);
+        return row;
     };
 
     /* ---------------------------------------------------------------- */
@@ -237,13 +238,14 @@ YtChatTtsDock::YtChatTtsDock(PluginContext *context, QWidget *parent)
     pitchSlider_ = new QSlider(Qt::Horizontal, voiceGroup);
     pitchSlider_->setRange(0, 200);
     pitchValueLabel_ = new QLabel(voiceGroup);
-    addSliderRow(voiceForm, uiText("Voice.Pitch", "Pitch"), pitchSlider_, pitchValueLabel_);
+    pitchRow_ = addSliderRow(voiceForm, uiText("Voice.Pitch", "Pitch"), pitchSlider_,
+                             pitchValueLabel_);
 
     amplitudeSlider_ = new QSlider(Qt::Horizontal, voiceGroup);
     amplitudeSlider_->setRange(0, 200);
     amplitudeValueLabel_ = new QLabel(voiceGroup);
-    addSliderRow(voiceForm, uiText("Voice.Amplitude", "Amplitude"), amplitudeSlider_,
-                 amplitudeValueLabel_);
+    amplitudeRow_ = addSliderRow(voiceForm, uiText("Voice.Amplitude", "Amplitude"),
+                                 amplitudeSlider_, amplitudeValueLabel_);
 
     volumeSlider_ = new QSlider(Qt::Horizontal, voiceGroup);
     /* Volume is 0.00-1.50 in the settings; the slider works in hundredths. */
@@ -251,6 +253,10 @@ YtChatTtsDock::YtChatTtsDock(PluginContext *context, QWidget *parent)
     volumeSlider_->setSingleStep(5);
     volumeValueLabel_ = new QLabel(voiceGroup);
     addSliderRow(voiceForm, uiText("Voice.Volume", "Volume"), volumeSlider_, volumeValueLabel_);
+
+    resetVoiceButton_ =
+        new QPushButton(uiText("Voice.ResetDefaults", "Restore voice defaults"), voiceGroup);
+    voiceForm->addRow(resetVoiceButton_);
 
     readAuthorCheck_ =
         new QCheckBox(uiText("Voice.ReadAuthor", "Read the author name"), voiceGroup);
@@ -421,6 +427,8 @@ YtChatTtsDock::YtChatTtsDock(PluginContext *context, QWidget *parent)
     connect(connectButton_, &QPushButton::clicked, this, &YtChatTtsDock::onConnectClicked);
     connect(testVoiceButton_, &QPushButton::clicked, this,
             &YtChatTtsDock::onTestVoiceClicked);
+    connect(resetVoiceButton_, &QPushButton::clicked, this,
+            &YtChatTtsDock::onResetVoiceClicked);
     connect(skipButton_, &QPushButton::clicked, this, &YtChatTtsDock::onSkipClicked);
     connect(clearQueueButton_, &QPushButton::clicked, this,
             &YtChatTtsDock::onClearQueueClicked);
@@ -788,8 +796,15 @@ void YtChatTtsDock::updateSourceStatus()
 
 void YtChatTtsDock::updateValueLabels()
 {
-    rateValueLabel_->setText(
-        uiTextf("Voice.RateValue", "%1 wpm", QString::number(rateSlider_->value())));
+    const bool piper = engineCombo_->currentData().toString() != QLatin1String("espeak");
+    if (piper) {
+        const double lengthScale = 165.0 / qMax(1, rateSlider_->value());
+        rateValueLabel_->setText(
+            uiTextf("Voice.PiperRateValue", "%1×", QString::number(lengthScale, 'f', 2)));
+    } else {
+        rateValueLabel_->setText(
+            uiTextf("Voice.RateValue", "%1 wpm", QString::number(rateSlider_->value())));
+    }
     pitchValueLabel_->setText(QString::number(pitchSlider_->value()));
     amplitudeValueLabel_->setText(QString::number(amplitudeSlider_->value()));
     volumeValueLabel_->setText(
@@ -814,6 +829,23 @@ void YtChatTtsDock::updateEngineControls()
     amplitudeSlider_->setEnabled(!piper);
     pitchSlider_->setToolTip(tooltip);
     amplitudeSlider_->setToolTip(tooltip);
+    if (pitchRow_)
+        pitchRow_->setVisible(!piper);
+    if (amplitudeRow_)
+        amplitudeRow_->setVisible(!piper);
+    updateValueLabels();
+}
+
+void YtChatTtsDock::onResetVoiceClicked()
+{
+    rateSlider_->setValue(165);
+    pitchSlider_->setValue(50);
+    amplitudeSlider_->setValue(150);
+    volumeSlider_->setValue(100);
+    updateValueLabels();
+    applyLiveSettingsNow();
+    scheduleSave();
+    appendLog(QStringLiteral("voice settings restored to defaults"));
 }
 
 void YtChatTtsDock::onStatusChanged(const QString &state, const QString &detail)

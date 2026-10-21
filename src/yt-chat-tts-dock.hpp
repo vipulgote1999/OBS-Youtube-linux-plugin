@@ -58,6 +58,7 @@ private:
     void updateSourceStatus();
     void updateValueLabels();
     void updateEngineControls();
+    void onResetVoiceClicked();
     void refreshQueue();
     void refreshStatuses();
     void appendLog(const QString &line);
@@ -94,9 +95,12 @@ private:
     QLabel *pitchValueLabel_ = nullptr;
     QLabel *amplitudeValueLabel_ = nullptr;
     QLabel *volumeValueLabel_ = nullptr;
+    QWidget *pitchRow_ = nullptr;
+    QWidget *amplitudeRow_ = nullptr;
     QCheckBox *readAuthorCheck_ = nullptr;
     QLineEdit *authorTemplateEdit_ = nullptr;
     QPushButton *testVoiceButton_ = nullptr;
+    QPushButton *resetVoiceButton_ = nullptr;
 
     QSpinBox *maxCharsSpin_ = nullptr;
     QSpinBox *userCooldownSpin_ = nullptr;
