@@ -2,7 +2,10 @@ package youtube
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"regexp"
+	"strings"
 
 	"obs-youtube-chat-tts/helper/internal/protocol"
 )
@@ -44,6 +47,61 @@ type Config struct {
 	APIKey   string `json:"api_key"`
 	Video    string `json:"video"`
 	HL       string `json:"hl"`
+}
+
+// RunAuto picks a chat provider for the "auto" mode.
+//
+// With an API key it tries the official provider first. A pre-connection
+// auth, quota, or network failure emits one status warning and then runs the
+// experimental InnerTube provider; a definitive stream state (not live, chat
+// disabled, parse failure), a fatal error after the official stream connected,
+// or a successful run is returned unchanged. Without a key InnerTube runs
+// directly because the official provider cannot authenticate.
+func RunAuto(
+	ctx context.Context,
+	cfg Config,
+	official Provider,
+	inner Provider,
+	emit func(protocol.Event),
+) error {
+	if strings.TrimSpace(cfg.APIKey) == "" {
+		return inner.Run(ctx, cfg, emit)
+	}
+
+	connected := false
+	track := func(e protocol.Event) {
+		if e.Type == "status" && e.State == "connected" {
+			connected = true
+		}
+		emit(e)
+	}
+
+	err := official.Run(ctx, cfg, track)
+	if err == nil {
+		return nil
+	}
+	if connected {
+		// The official stream was live; switching providers mid-stream would
+		// duplicate history instead of recovering a connection.
+		return err
+	}
+
+	var yerr *Error
+	if !errors.As(err, &yerr) {
+		return err
+	}
+	switch yerr.Code {
+	case CodeAuth, CodeQuota, CodeNetwork:
+		emit(protocol.Event{
+			Type:  "status",
+			State: "connecting",
+			Detail: fmt.Sprintf(
+				"official provider unavailable (%s); falling back to experimental innertube",
+				yerr.Code),
+		})
+		return inner.Run(ctx, cfg, emit)
+	}
+	return err
 }
 
 // Error is the provider's internal error type. The caller maps Code to the

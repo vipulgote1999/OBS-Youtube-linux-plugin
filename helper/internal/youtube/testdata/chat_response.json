@@ -1,0 +1,73 @@
+{
+  "continuationContents": {
+    "liveChatContinuation": {
+      "actions": [
+        {
+          "addChatItemAction": {
+            "item": {
+              "liveChatTextMessageRenderer": {
+                "id": "msg-text-1",
+                "timestampUsec": "1729500000000000",
+                "authorName": {"simpleText": "Alice"},
+                "authorChannelId": {"value": "UC-alice"},
+                "message": {"runs": [{"text": "hello "}, {"text": "chat"}]}
+              }
+            }
+          }
+        },
+        {
+          "addChatItemAction": {
+            "item": {
+              "liveChatPaidMessageRenderer": {
+                "id": "msg-super-1",
+                "timestampUsec": "1729500001000000",
+                "authorName": {"simpleText": "Bob"},
+                "authorChannelId": {"value": "UC-bob"},
+                "message": {"runs": [{"text": "great stream"}]},
+                "purchaseAmountText": {"simpleText": "$5.00"},
+                "authorBadges": [
+                  {"liveChatAuthorBadgeRenderer": {"tooltip": "Member"}}
+                ]
+              }
+            }
+          }
+        },
+        {
+          "addChatItemAction": {
+            "item": {
+              "liveChatMembershipItemRenderer": {
+                "id": "msg-member-1",
+                "timestampUsec": "1729500002000000",
+                "authorName": {"simpleText": "Carol"},
+                "authorChannelId": {"value": "UC-carol"},
+                "message": {"runs": [{"text": "joined the channel"}]},
+                "authorBadges": [
+                  {"liveChatAuthorBadgeRenderer": {"tooltip": "Moderator"}},
+                  {"liveChatAuthorBadgeRenderer": {"tooltip": "Member"}}
+                ]
+              }
+            }
+          }
+        },
+        {
+          "addChatItemAction": {
+            "item": {
+              "liveChatViewerEngagementMessageRenderer": {
+                "id": "ignored-engagement",
+                "message": {"runs": [{"text": "Live chat replay is on"}]}
+              }
+            }
+          }
+        }
+      ],
+      "continuations": [
+        {
+          "invalidationContinuationData": {
+            "continuation": "NEXT",
+            "timeoutMs": 10
+          }
+        }
+      ]
+    }
+  }
+}

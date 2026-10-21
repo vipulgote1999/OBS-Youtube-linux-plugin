@@ -4,8 +4,11 @@
 // never on the command line, and is never written to any log or event.
 //
 // The official provider resolves the input through the YouTube Data API and
-// streams messages from V3DataLiveChatMessageService over gRPC. The InnerTube
-// provider and the auto fallback land in a later task.
+// streams messages from V3DataLiveChatMessageService over gRPC. The
+// experimental InnerTube provider needs no API key and reads YouTube's public
+// watch page and live chat endpoint. The auto provider prefers the official
+// API when a key is present and falls back to InnerTube on a pre-connection
+// auth, quota, or network failure.
 package main
 
 import (
@@ -93,25 +96,26 @@ func run(stdin io.Reader, stdout io.Writer) int {
 	switch cfg.Provider {
 	case "official":
 		return runOfficial(ctx, stdout, providerCfg)
-	case "auto":
-		if cfg.APIKey != "" {
-			return runOfficial(ctx, stdout, providerCfg)
-		}
-		return fatal(stdout, "not_implemented",
-			"the auto provider needs an API key until the InnerTube fallback lands")
-	default: // innertube
-		return fatal(stdout, "not_implemented",
-			"the innertube provider is not implemented yet")
+	case "innertube":
+		return runInnerTube(ctx, stdout, providerCfg)
+	default: // auto
+		return runAuto(ctx, stdout, providerCfg)
 	}
 }
 
-// runOfficial streams chat through the official provider, reporting connecting
-// before the first request and mapping provider errors to protocol events.
-func runOfficial(ctx context.Context, stdout io.Writer, cfg youtube.Config) int {
+// runProvider emits the connecting status for label, runs provider, and maps
+// its error to the protocol stream.
+func runProvider(
+	ctx context.Context,
+	stdout io.Writer,
+	cfg youtube.Config,
+	provider youtube.Provider,
+	label string,
+) int {
 	if err := protocol.WriteEvent(stdout, protocol.Event{
 		Type:   "status",
 		State:  "connecting",
-		Detail: "official",
+		Detail: label,
 	}); err != nil {
 		log.Printf("error: failed to write status event: %v", err)
 		return 1
@@ -123,7 +127,6 @@ func runOfficial(ctx context.Context, stdout io.Writer, cfg youtube.Config) int 
 		}
 	}
 
-	provider := &youtube.OfficialProvider{}
 	err := provider.Run(ctx, cfg, emit)
 	if err == nil {
 		return 0
@@ -132,6 +135,37 @@ func runOfficial(ctx context.Context, stdout io.Writer, cfg youtube.Config) int 
 		return 0
 	}
 	return providerError(stdout, err)
+}
+
+// runOfficial streams chat through the official provider.
+func runOfficial(ctx context.Context, stdout io.Writer, cfg youtube.Config) int {
+	return runProvider(ctx, stdout, cfg, &youtube.OfficialProvider{}, "official")
+}
+
+// runInnerTube streams chat through the experimental no-key provider.
+func runInnerTube(ctx context.Context, stdout io.Writer, cfg youtube.Config) int {
+	return runProvider(ctx, stdout, cfg, &youtube.InnerTubeProvider{}, "innertube (experimental)")
+}
+
+// runAuto tries the official provider when a key is configured and falls back
+// to the experimental InnerTube provider on a pre-connection failure.
+func runAuto(ctx context.Context, stdout io.Writer, cfg youtube.Config) int {
+	return runProvider(ctx, stdout, cfg, autoProvider{
+		official: &youtube.OfficialProvider{},
+		inner:    &youtube.InnerTubeProvider{},
+	}, "auto")
+}
+
+// autoProvider adapts RunAuto to the Provider interface so main can share one
+// event and exit-code path.
+type autoProvider struct {
+	official youtube.Provider
+	inner    youtube.Provider
+}
+
+// Run implements youtube.Provider.
+func (a autoProvider) Run(ctx context.Context, cfg youtube.Config, emit func(protocol.Event)) error {
+	return youtube.RunAuto(ctx, cfg, a.official, a.inner, emit)
 }
 
 // providerError writes one error event for a provider failure and returns the

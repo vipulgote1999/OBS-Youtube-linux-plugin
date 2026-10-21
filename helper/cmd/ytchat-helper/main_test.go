@@ -37,32 +37,45 @@ func runConfig(t *testing.T, cfg string) (int, string) {
 	return code, stdout.String()
 }
 
-// TestRunInnertubeNotImplemented documents the Task 5 boundary: the InnerTube
-// provider is selected but not implemented yet.
-func TestRunInnertubeNotImplemented(t *testing.T) {
-	code, out := runConfig(t, `{"provider":"innertube","video":"dQw4w9WgXcQ"}`)
+// TestRunInnertubeRoutes checks that the innertube provider is selected and
+// marked experimental. The invalid input fails before any network access.
+func TestRunInnertubeRoutes(t *testing.T) {
+	code, out := runConfig(t, `{"provider":"innertube","video":"not a youtube url"}`)
 	if code != 1 {
 		t.Errorf("exit = %d, want 1", code)
 	}
 	events := decodeEvents(t, out)
-	if len(events) != 1 {
-		t.Fatalf("events = %#v, want one error event", events)
+	if len(events) != 2 {
+		t.Fatalf("events = %#v, want connecting then error", events)
 	}
-	if events[0].Type != "error" || events[0].Code != "not_implemented" || !events[0].Fatal {
-		t.Errorf("event = %#v, want fatal not_implemented error", events[0])
+	if events[0].Type != "status" || events[0].State != "connecting" {
+		t.Errorf("first event = %#v, want connecting status", events[0])
+	}
+	if !strings.Contains(events[0].Detail, "experimental") {
+		t.Errorf("connecting detail = %q, want an experimental marker", events[0].Detail)
+	}
+	if events[1].Type != "error" || events[1].Code != "parse" || !events[1].Fatal {
+		t.Errorf("second event = %#v, want fatal parse error", events[1])
 	}
 }
 
-// TestRunAutoWithoutKey checks that auto without a key reports the same
-// not-implemented boundary instead of attempting an unauthenticated request.
+// TestRunAutoWithoutKey checks that auto without a key runs InnerTube directly
+// instead of attempting an unauthenticated official request. The invalid input
+// fails before any network access.
 func TestRunAutoWithoutKey(t *testing.T) {
-	code, out := runConfig(t, `{"provider":"auto","video":"dQw4w9WgXcQ"}`)
+	code, out := runConfig(t, `{"provider":"auto","video":"not a youtube url"}`)
 	if code != 1 {
 		t.Errorf("exit = %d, want 1", code)
 	}
 	events := decodeEvents(t, out)
-	if len(events) != 1 || events[0].Code != "not_implemented" {
-		t.Fatalf("events = %#v, want one not_implemented error", events)
+	if len(events) != 2 {
+		t.Fatalf("events = %#v, want connecting then error", events)
+	}
+	if events[0].Type != "status" || events[0].State != "connecting" {
+		t.Errorf("first event = %#v, want connecting status", events[0])
+	}
+	if events[1].Type != "error" || events[1].Code != "parse" || !events[1].Fatal {
+		t.Errorf("second event = %#v, want fatal parse error", events[1])
 	}
 }
 
