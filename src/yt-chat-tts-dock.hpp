@@ -7,6 +7,7 @@
 class PluginContext;
 class QCheckBox;
 class QComboBox;
+class QFormLayout;
 class QLabel;
 class QLineEdit;
 class QListWidget;
@@ -84,6 +85,7 @@ private:
     QLabel *statusLabel_ = nullptr;
     QPushButton *connectButton_ = nullptr;
 
+    QFormLayout *voiceForm_ = nullptr;
     QComboBox *engineCombo_ = nullptr;
     QComboBox *piperVoiceCombo_ = nullptr;
     QComboBox *voiceCombo_ = nullptr;

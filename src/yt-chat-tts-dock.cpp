@@ -57,6 +57,18 @@ QString uiTextf(const char *key, const char *fallback, const QString &value)
     return uiText(key, fallback).arg(value);
 }
 
+/* QFormLayout keeps the label widget alive when its field is hidden, so hide
+ * both halves of a row.  Without this, switching to Piper leaves "Rate" and
+ * "Pitch" labels floating above nothing. */
+void setFormRowVisible(QFormLayout *form, QWidget *field, bool visible)
+{
+    if (!form || !field)
+        return;
+    field->setVisible(visible);
+    if (QWidget *label = form->labelForField(field))
+        label->setVisible(visible);
+}
+
 /* The helper reports "official" or "innertube (experimental)" after connecting;
  * the status detail stays short and provider-focused. */
 QString providerLabel(const QString &detail)
@@ -206,6 +218,7 @@ YtChatTtsDock::YtChatTtsDock(PluginContext *context, QWidget *parent)
     /* ---------------------------------------------------------------- */
     auto *voiceGroup = new QGroupBox(uiText("Voice.Group", "Voice"), settingsWidget);
     auto *voiceForm = new QFormLayout(voiceGroup);
+    voiceForm_ = voiceForm;
 
     engineCombo_ = new QComboBox(voiceGroup);
     engineCombo_->addItem(uiText("Voice.EnginePiper", "Piper — natural (CPU)"),
@@ -238,6 +251,8 @@ YtChatTtsDock::YtChatTtsDock(PluginContext *context, QWidget *parent)
     piperSpeedSlider_ = new QSlider(Qt::Horizontal, voiceGroup);
     piperSpeedSlider_->setRange(50, 200);
     piperSpeedSlider_->setSingleStep(5);
+    piperSpeedSlider_->setToolTip(
+        uiText("Voice.SpeedTooltip", "Lower values speak more slowly; 0.85× is a relaxed pace."));
     speedValueLabel_ = new QLabel(voiceGroup);
     speedRow_ = addSliderRow(voiceForm, uiText("Voice.Speed", "Speed"), piperSpeedSlider_,
                              speedValueLabel_);
@@ -845,14 +860,15 @@ void YtChatTtsDock::updateEngineControls()
     const bool piper = engineCombo_->currentData().toString() != QLatin1String("espeak");
 
     /* Each engine keeps its own voice control so switching back and forth
-     * never overwrites the other engine's saved choice. */
+     * never overwrites the other engine's saved choice.  Only the active
+     * engine's controls are visible; the basic view stays short. */
     piperVoiceCombo_->setEnabled(piper);
     voiceCombo_->setEnabled(!piper);
+    setFormRowVisible(voiceForm_, piperVoiceCombo_, piper);
+    setFormRowVisible(voiceForm_, voiceCombo_, !piper);
 
-    if (rateRow_)
-        rateRow_->setVisible(!piper);
-    if (speedRow_)
-        speedRow_->setVisible(piper);
+    setFormRowVisible(voiceForm_, rateRow_, !piper);
+    setFormRowVisible(voiceForm_, speedRow_, piper);
 
     /* Piper has no pitch/amplitude knobs; its voice model fixes them. */
     const QString tooltip =
@@ -864,10 +880,10 @@ void YtChatTtsDock::updateEngineControls()
     pitchSlider_->setToolTip(tooltip);
     amplitudeSlider_->setToolTip(tooltip);
     const bool showAdvanced = advancedVoiceCheck_ && advancedVoiceCheck_->isChecked();
-    if (pitchRow_)
-        pitchRow_->setVisible(!piper && showAdvanced);
-    if (amplitudeRow_)
-        amplitudeRow_->setVisible(!piper && showAdvanced);
+    if (advancedVoiceCheck_)
+        advancedVoiceCheck_->setVisible(!piper);
+    setFormRowVisible(voiceForm_, pitchRow_, !piper && showAdvanced);
+    setFormRowVisible(voiceForm_, amplitudeRow_, !piper && showAdvanced);
     updateValueLabels();
 }
 

@@ -36,9 +36,13 @@ bool PiperEngine::synthesize(const QString &text, std::vector<float> *pcm, int *
     if (!api_)
         return fail(error, QStringLiteral("piper backend is not available"));
 
-    const float lengthScale = speed_ > 0.0f
-                                  ? qBound(kMinLengthScale, speed_, kMaxLengthScale)
-                                  : qBound(kMinLengthScale, kBaseRate / float(rate_), kMaxLengthScale);
+    /* Piper's length_scale is the inverse of playback speed: 1.0 is normal,
+     * 2.0 is half speed, 0.5 is double speed.  The UI speed is the familiar
+     * multiplier (2.0x = twice as fast), so invert it here. */
+    const float lengthScale =
+        speed_ > 0.0f
+            ? qBound(kMinLengthScale, 1.0f / speed_, kMaxLengthScale)
+            : qBound(kMinLengthScale, kBaseRate / float(rate_), kMaxLengthScale);
     if (!api_->synthesize(text, lengthScale, pcm, sampleRate, error)) {
         if (error && error->isEmpty())
             *error = QStringLiteral("piper synthesis failed");

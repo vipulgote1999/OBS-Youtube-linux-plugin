@@ -25,7 +25,8 @@ public:
     void cancel() override;
     void resetCancel() override;
 
-    /* Direct Piper length-scale override (1.0 = normal).  When unset, the
+    /* Playback speed multiplier (1.0 = normal, 2.0 = twice as fast).  The
+     * engine converts it to Piper's inverse length scale.  When unset, the
      * legacy rate->length-scale mapping is used. */
     void setSpeed(float speed);
     bool initializationFailed() const override;

@@ -54,6 +54,7 @@ class TestPiperEngine : public QObject {
 private slots:
     void returnsPcmAndRate();
     void mapsRateToClampedLengthScale();
+    void mapsSpeedInverseToLengthScale();
     void reportsApiFailure();
     void rejectsWrongSampleRate();
     void rejectsNullApi();
@@ -109,6 +110,40 @@ void TestPiperEngine::mapsRateToClampedLengthScale()
         QVERIFY2(qAbs(fake->calls.at(0).lengthScale - testCase.expected) < 0.0001f,
                  qPrintable(QStringLiteral("rate %1 produced length scale %2")
                                 .arg(testCase.rate)
+                                .arg(fake->calls.at(0).lengthScale)));
+    }
+}
+
+void TestPiperEngine::mapsSpeedInverseToLengthScale()
+{
+    struct Case {
+        float speed;
+        float expected;
+    };
+    const Case cases[] = {
+        {2.0f, 0.5f},
+        {1.0f, 1.0f},
+        {0.85f, 1.0f / 0.85f},
+        {0.5f, 2.0f},
+        {0.25f, 2.0f},
+        {4.0f, 0.5f},
+    };
+
+    for (const Case &testCase : cases) {
+        auto api = std::make_unique<FakePiperApi>();
+        FakePiperApi *fake = api.get();
+        PiperEngine engine(std::move(api));
+        engine.setSpeed(testCase.speed);
+
+        std::vector<float> pcm;
+        int sampleRate = 0;
+        QString error;
+        QVERIFY2(engine.synthesize(QStringLiteral("speed"), &pcm, &sampleRate, &error),
+                 qPrintable(error));
+        QCOMPARE(fake->calls.size(), size_t(1));
+        QVERIFY2(qAbs(fake->calls.at(0).lengthScale - testCase.expected) < 0.0001f,
+                 qPrintable(QStringLiteral("speed %1 produced length scale %2")
+                                .arg(testCase.speed)
                                 .arg(fake->calls.at(0).lengthScale)));
     }
 }
