@@ -121,12 +121,14 @@ void TestPiperEngine::mapsSpeedInverseToLengthScale()
         float expected;
     };
     const Case cases[] = {
+        {0.0f, 3.0f},
+        {3.0f, 1.0f / 3.0f},
         {2.0f, 0.5f},
         {1.0f, 1.0f},
         {0.85f, 1.0f / 0.85f},
         {0.5f, 2.0f},
         {0.25f, 2.0f},
-        {4.0f, 0.5f},
+        {4.0f, 1.0f / 3.0f},
     };
 
     for (const Case &testCase : cases) {

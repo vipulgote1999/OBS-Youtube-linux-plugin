@@ -7,8 +7,8 @@
 namespace {
 constexpr int kPiperSampleRate = 22050;
 constexpr float kBaseRate = 165.0f;
-constexpr float kMinLengthScale = 0.5f;
-constexpr float kMaxLengthScale = 2.0f;
+constexpr float kMinLengthScale = 1.0f / 3.0f;
+constexpr float kMaxLengthScale = 3.0f;
 
 bool fail(QString *error, const QString &message)
 {
@@ -37,12 +37,15 @@ bool PiperEngine::synthesize(const QString &text, std::vector<float> *pcm, int *
         return fail(error, QStringLiteral("piper backend is not available"));
 
     /* Piper's length_scale is the inverse of playback speed: 1.0 is normal,
-     * 2.0 is half speed, 0.5 is double speed.  The UI speed is the familiar
-     * multiplier (2.0x = twice as fast), so invert it here. */
+     * 3.0 is one-third speed, 1/3 is triple speed.  The UI speed is the
+     * familiar multiplier (3.0x = three times as fast), so invert it here.
+     * A zero (or negative) speed is treated as the slowest supported speed. */
     const float lengthScale =
         speed_ > 0.0f
             ? qBound(kMinLengthScale, 1.0f / speed_, kMaxLengthScale)
-            : qBound(kMinLengthScale, kBaseRate / float(rate_), kMaxLengthScale);
+            : (speed_ == 0.0f
+                   ? kMaxLengthScale
+                   : qBound(kMinLengthScale, kBaseRate / float(rate_), kMaxLengthScale));
     if (!api_->synthesize(text, lengthScale, pcm, sampleRate, error)) {
         if (error && error->isEmpty())
             *error = QStringLiteral("piper synthesis failed");

@@ -33,7 +33,7 @@ void clampValues(Settings *settings)
     settings->pitch = qBound(kPitchMin, settings->pitch, kPitchMax);
     settings->amplitude = qBound(kPitchMin, settings->amplitude, kPitchMax);
     settings->volume = qBound(kVolumeMin, settings->volume, kVolumeMax);
-    settings->piperSpeed = qBound(0.5, settings->piperSpeed, 2.0);
+    settings->piperSpeed = qBound(0.0, settings->piperSpeed, 3.0);
     settings->userCooldownSec =
         qBound(kUserCooldownMin, settings->userCooldownSec, kUserCooldownMax);
     settings->globalCooldownSec =

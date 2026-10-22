@@ -249,10 +249,11 @@ YtChatTtsDock::YtChatTtsDock(PluginContext *context, QWidget *parent)
     rateRow_ = addSliderRow(voiceForm, uiText("Voice.Rate", "Rate"), rateSlider_, rateValueLabel_);
 
     piperSpeedSlider_ = new QSlider(Qt::Horizontal, voiceGroup);
-    piperSpeedSlider_->setRange(50, 200);
+    piperSpeedSlider_->setRange(0, 300);
     piperSpeedSlider_->setSingleStep(5);
     piperSpeedSlider_->setToolTip(
-        uiText("Voice.SpeedTooltip", "Lower values speak more slowly; 0.85× is a relaxed pace."));
+        uiText("Voice.SpeedTooltip",
+               "Lower values speak more slowly. 0.00 is the slowest and 3.00 is the fastest."));
     speedValueLabel_ = new QLabel(voiceGroup);
     speedRow_ = addSliderRow(voiceForm, uiText("Voice.Speed", "Speed"), piperSpeedSlider_,
                              speedValueLabel_);
