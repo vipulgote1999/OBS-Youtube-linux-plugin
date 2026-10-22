@@ -27,7 +27,7 @@ import (
 )
 
 // helperVersion is what --version prints.
-const helperVersion = "0.1.0"
+const helperVersion = "0.2.0"
 
 // config is the single JSON object the OBS plugin writes on the helper's
 // stdin before closing it: {"provider","api_key","video","hl"}.

@@ -24,6 +24,17 @@
     </ul>
   </description>
   <releases>
+    <release version="0.2.0" date="2026-10-22">
+      <description>
+        <p>Second release: adds the bundled offline Piper neural voice engine alongside espeak-ng, with engine-aware controls, speed control, and UI fixes.</p>
+        <ul>
+          <li>Bundled Piper 1.7.0 with ONNX Runtime 1.22.0 and the public-domain en_US-ljspeech-medium voice.</li>
+          <li>Engine-aware Voice controls: Piper Speed (0.00x-3.00x) and espeak-ng Rate, Pitch, Amplitude.</li>
+          <li>Collapsed Queue and Log sections, advanced voice settings hidden by default, and fixed multi-word locale labels.</li>
+          <li>Fixed Piper speed direction so lower values speak more slowly.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-10-21">
       <description>
         <p>First release of the Flatpak extension.</p>

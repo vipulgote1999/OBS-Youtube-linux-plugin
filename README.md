@@ -456,15 +456,15 @@ exercises cancellation and missing-config error paths.
 
 ## Version
 
-**0.1.0** (2026-10-21). This is the first release: Flatpak extension, dock,
-official and experimental chat providers, espeak-ng audio source, filtering,
-queue and persisted settings. The `v0.1.0` release tag is pending completion of
-the live acceptance matrix; see `docs/acceptance-checklist.md`.
+**0.2.0** (2026-10-22). This release adds the bundled offline Piper neural
+voice engine alongside espeak-ng, with engine-aware Voice controls, a Piper
+Speed slider (0.00x-3.00x), collapsed Queue/Log sections, and UI fixes. It
+also fixes Piper speed direction, multi-word locale labels, and the bundled
+ONNX Runtime SONAME isolation.
 
-The Piper engine described in this README is developed on
-`feature/piper-tts` for a later release. It is not part of the published
-`v0.1.0` tag; live OBS acceptance for Piper is still pending and is tracked in
-the acceptance checklist.
+The `v0.2.0` release is published from `feature/piper-tts` after merging it
+into `main`. See [`docs/release-notes-v0.2.0.md`](docs/release-notes-v0.2.0.md)
+for the full release notes.
 
 ## License
 

@@ -11,4 +11,4 @@
 #define PLUGIN_DOCK_ID "yt-chat-tts-dock"
 
 /* Keep in sync with the project() version in CMakeLists.txt. */
-#define PLUGIN_VERSION "0.1.0"
+#define PLUGIN_VERSION "0.2.0"
