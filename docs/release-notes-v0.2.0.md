@@ -26,7 +26,14 @@ controls and UI fixes.
 Download `OBS-Youtube-Chat-TTS-0.2.0.flatpak` from the release assets, then run:
 
 ```bash
-flatpak install --user ./OBS-Youtube-Chat-TTS-0.2.0.flatpak
+flatpak install --user --bundle ./OBS-Youtube-Chat-TTS-0.2.0.flatpak
+```
+
+Or install directly from the release URL:
+
+```bash
+flatpak install --user --bundle \
+  https://github.com/vipulgote1999/OBS-Youtube-linux-plugin/releases/download/v0.2.0/OBS-Youtube-Chat-TTS-0.2.0.flatpak
 ```
 
 Then restart OBS and open **Docks → YouTube Chat TTS**. Add the

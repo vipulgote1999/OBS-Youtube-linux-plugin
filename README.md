@@ -71,6 +71,36 @@ about 21 MB of shared libraries, and the installed extension is roughly
 100–140 MB instead of the espeak-only size. Those files are bundled so the
 extension stays offline and self-contained.
 
+## Quick install (prebuilt Flatpak bundle)
+
+Download `OBS-Youtube-Chat-TTS-0.2.0.flatpak` from the
+[latest release](https://github.com/vipulgote1999/OBS-Youtube-linux-plugin/releases/latest),
+then install it with Flatpak:
+
+```bash
+flatpak install --user --bundle ./OBS-Youtube-Chat-TTS-0.2.0.flatpak
+```
+
+Or install directly from the release URL:
+
+```bash
+flatpak install --user --bundle \
+  https://github.com/vipulgote1999/OBS-Youtube-linux-plugin/releases/download/v0.2.0/OBS-Youtube-Chat-TTS-0.2.0.flatpak
+```
+
+Then restart OBS and open **Docks → YouTube Chat TTS**. Add the
+**YouTube Chat TTS** audio source before going live.
+
+The bundle is x86-64 only and requires OBS Studio from Flathub. If Flatpak
+asks for the OBS runtime, install OBS first:
+
+```bash
+flatpak install flathub com.obsproject.Studio
+```
+
+SHA-256 for the bundle:
+`36d33d325b87c11be7529eab33e7419014d1b140a4c9198d8d9f77c11dbd2505`
+
 ## Build, install and verify
 
 ```bash
