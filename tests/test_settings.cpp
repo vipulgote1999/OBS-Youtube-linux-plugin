@@ -30,6 +30,10 @@ void compareSettings(const Settings &actual, const Settings &expected)
     QCOMPARE(actual.piperModelPath, expected.piperModelPath);
     QCOMPARE(actual.piperConfigPath, expected.piperConfigPath);
     QCOMPARE(actual.piperSpeed, expected.piperSpeed);
+    QCOMPARE(actual.streamAudio, expected.streamAudio);
+    QCOMPARE(actual.localTtsUrl, expected.localTtsUrl);
+    QCOMPARE(actual.localTtsVoice, expected.localTtsVoice);
+    QCOMPARE(actual.localTtsModel, expected.localTtsModel);
     QCOMPARE(actual.rate, expected.rate);
     QCOMPARE(actual.pitch, expected.pitch);
     QCOMPARE(actual.amplitude, expected.amplitude);
@@ -102,6 +106,7 @@ private slots:
     void loadsDefaultsForMissingFile();
     void clampsInvalidValues();
     void acceptsCooldownBoundaries();
+    void migratesZeroPiperSpeed();
 };
 
 void TestSettings::roundTripsThroughObsData()
@@ -277,7 +282,7 @@ void TestSettings::loadsDefaultsForMissingFile()
     QCOMPARE(settings.amplitude, 150);
     QCOMPARE(settings.volume, 1.0);
     QCOMPARE(settings.maxChars, 200);
-    QCOMPARE(settings.piperSpeed, 0.85);
+    QCOMPARE(settings.piperSpeed, 1.0);
     QCOMPARE(settings.userCooldownSec, 30);
     QCOMPARE(settings.globalCooldownSec, 2);
     QCOMPARE(settings.queueLimit, 25);
@@ -330,6 +335,21 @@ void TestSettings::acceptsCooldownBoundaries()
 
     QCOMPARE(settings.userCooldownSec, 3600);
     QCOMPARE(settings.globalCooldownSec, 0);
+}
+
+void TestSettings::migratesZeroPiperSpeed()
+{
+    obs_data_t *data = obs_data_create();
+    obs_data_set_double(data, "piperSpeed", 0.0);
+    Settings settings = Settings::fromObsData(data);
+    obs_data_release(data);
+    QCOMPARE(settings.piperSpeed, 1.0);
+
+    data = obs_data_create();
+    obs_data_set_double(data, "piperSpeed", 0.05);
+    settings = Settings::fromObsData(data);
+    obs_data_release(data);
+    QCOMPARE(settings.piperSpeed, 0.25);
 }
 
 QTEST_GUILESS_MAIN(TestSettings)

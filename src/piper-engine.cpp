@@ -36,17 +36,7 @@ bool PiperEngine::synthesize(const QString &text, std::vector<float> *pcm, int *
     if (!api_)
         return fail(error, QStringLiteral("piper backend is not available"));
 
-    /* Piper's length_scale is the inverse of playback speed: 1.0 is normal,
-     * 3.0 is one-third speed, 1/3 is triple speed.  The UI speed is the
-     * familiar multiplier (3.0x = three times as fast), so invert it here.
-     * A zero (or negative) speed is treated as the slowest supported speed. */
-    const float lengthScale =
-        speed_ > 0.0f
-            ? qBound(kMinLengthScale, 1.0f / speed_, kMaxLengthScale)
-            : (speed_ == 0.0f
-                   ? kMaxLengthScale
-                   : qBound(kMinLengthScale, kBaseRate / float(rate_), kMaxLengthScale));
-    if (!api_->synthesize(text, lengthScale, pcm, sampleRate, error)) {
+    if (!api_->synthesize(text, lengthScale(), pcm, sampleRate, error)) {
         if (error && error->isEmpty())
             *error = QStringLiteral("piper synthesis failed");
         return false;
@@ -62,6 +52,48 @@ bool PiperEngine::synthesize(const QString &text, std::vector<float> *pcm, int *
     }
 
     return true;
+}
+
+bool PiperEngine::synthesizeStreaming(const QString &text, const ChunkSink &sink,
+                                      int *sampleRate, QString *error)
+{
+    if (error)
+        error->clear();
+    if (!sampleRate)
+        return fail(error, QStringLiteral("invalid TTS output buffer"));
+    *sampleRate = 0;
+
+    if (!api_)
+        return fail(error, QStringLiteral("piper backend is not available"));
+
+    if (!api_->synthesizeStreaming(text, lengthScale(), sink, sampleRate, error)) {
+        if (error && error->isEmpty())
+            *error = QStringLiteral("piper synthesis failed");
+        return false;
+    }
+
+    if (*sampleRate != kPiperSampleRate) {
+        const int actualRate = *sampleRate;
+        *sampleRate = 0;
+        return fail(error, QStringLiteral("piper returned %1 Hz; expected %2 Hz")
+                               .arg(actualRate)
+                               .arg(kPiperSampleRate));
+    }
+
+    return true;
+}
+
+float PiperEngine::lengthScale() const
+{
+    /* Piper's length_scale is the inverse of playback speed: 1.0 is normal,
+     * 3.0 is one-third speed, 1/3 is triple speed.  The UI speed is the
+     * familiar multiplier (3.0x = three times as fast), so invert it here.
+     * A zero (or negative) speed is treated as the slowest supported speed. */
+    if (speed_ > 0.0f)
+        return qBound(kMinLengthScale, 1.0f / speed_, kMaxLengthScale);
+    if (speed_ == 0.0f)
+        return kMaxLengthScale;
+    return qBound(kMinLengthScale, kBaseRate / float(rate_), kMaxLengthScale);
 }
 
 void PiperEngine::cancel()

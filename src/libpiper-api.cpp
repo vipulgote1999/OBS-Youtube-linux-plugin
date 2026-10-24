@@ -122,11 +122,24 @@ bool LibPiperApi::ensureSynthesizer(QString *error)
 bool LibPiperApi::synthesize(const QString &text, float lengthScale, std::vector<float> *pcm,
                              int *sampleRate, QString *error)
 {
+    return run(text, lengthScale, pcm, nullptr, sampleRate, error);
+}
+
+bool LibPiperApi::synthesizeStreaming(const QString &text, float lengthScale,
+                                      const ChunkSink &sink, int *sampleRate, QString *error)
+{
+    return run(text, lengthScale, nullptr, &sink, sampleRate, error);
+}
+
+bool LibPiperApi::run(const QString &text, float lengthScale, std::vector<float> *pcm,
+                      const ChunkSink *sink, int *sampleRate, QString *error)
+{
     if (error)
         error->clear();
-    if (!pcm || !sampleRate)
+    if ((!pcm && !sink) || !sampleRate)
         return fail(error, QStringLiteral("invalid TTS output buffer"));
-    pcm->clear();
+    if (pcm)
+        pcm->clear();
     *sampleRate = 0;
 
     // The worker calls resetCancel() right before each utterance; a stop that
@@ -160,28 +173,30 @@ bool LibPiperApi::synthesize(const QString &text, float lengthScale, std::vector
         bool finished = false;
         while (!finished) {
             if (cancelRequested_.load()) {
-                pcm->clear();
+                if (pcm)
+                    pcm->clear();
                 return fail(error, QStringLiteral("cancelled"));
             }
 
             piper_audio_chunk chunk{};
             rc = piper_synthesize_next(synthesizer_, &chunk);
             if (rc != PIPER_OK && rc != PIPER_DONE) {
-                pcm->clear();
+                if (pcm)
+                    pcm->clear();
                 return fail(error,
                             QStringLiteral("piper_synthesize_next failed (rc=%1)").arg(rc));
             }
 
-            // PIPER_DONE still fills the final chunk, so consume it before
-            // stopping.
-            if (chunk.samples && chunk.num_samples > 0) {
-                pcm->insert(pcm->end(), chunk.samples, chunk.samples + chunk.num_samples);
-            }
+            // Publish the rate before the first chunk reaches the sink: the
+            // worker's streaming conditioner needs it to size the fades.
             if (chunk.sample_rate > 0) {
                 if (rate == 0) {
                     rate = chunk.sample_rate;
+                    if (sampleRate)
+                        *sampleRate = rate;
                 } else if (chunk.sample_rate != rate) {
-                    pcm->clear();
+                    if (pcm)
+                        pcm->clear();
                     return fail(error,
                                 QStringLiteral("piper sample rate changed from %1 Hz to %2 Hz")
                                     .arg(rate)
@@ -189,28 +204,47 @@ bool LibPiperApi::synthesize(const QString &text, float lengthScale, std::vector
                 }
             }
 
-            finished = (rc == PIPER_DONE) || chunk.is_last;
+            // PIPER_DONE still fills the final chunk, so consume it before
+            // stopping.
+            const bool isLast = (rc == PIPER_DONE) || chunk.is_last;
+            if (chunk.samples && chunk.num_samples > 0) {
+                if (pcm) {
+                    pcm->insert(pcm->end(), chunk.samples,
+                                chunk.samples + chunk.num_samples);
+                }
+                if (sink && !(*sink)(chunk.samples, size_t(chunk.num_samples), isLast)) {
+                    if (pcm)
+                        pcm->clear();
+                    *sampleRate = 0;
+                    return fail(error, QStringLiteral("cancelled"));
+                }
+            }
+
+            finished = isLast;
         }
     } catch (const std::exception &e) {
-        pcm->clear();
+        if (pcm)
+            pcm->clear();
         *sampleRate = 0;
         destroySynthesizerLocked();
         return fail(error, QStringLiteral("piper synthesis failed: %1")
                                .arg(QString::fromUtf8(e.what())));
     } catch (...) {
-        pcm->clear();
+        if (pcm)
+            pcm->clear();
         *sampleRate = 0;
         destroySynthesizerLocked();
         return fail(error, QStringLiteral("piper synthesis failed: unknown exception"));
     }
 
     if (rate != kPiperSampleRate) {
-        pcm->clear();
+        if (pcm)
+            pcm->clear();
         return fail(error, QStringLiteral("piper returned %1 Hz; expected %2 Hz")
                                .arg(rate)
                                .arg(kPiperSampleRate));
     }
-    if (pcm->empty())
+    if (pcm && pcm->empty())
         return fail(error, QStringLiteral("piper produced no audio"));
 
     *sampleRate = rate;

@@ -102,10 +102,13 @@ private:
 
     /* Engine parameters the current worker was created with; used to restart
      * the worker when the engine, voice, rate, pitch or amplitude changes.
-     * engineSelection_ is the requested value ("piper"/"espeak"), not the
-     * backend that was actually created after a fallback. */
+     * engineSelection_ is the requested value ("piper"/"espeak"/"local"), not
+     * the backend that was actually created after a fallback. */
     QString engineSelection_;
     QString enginePiperVoice_;
+    QString engineLocalUrl_;
+    QString engineLocalVoice_;
+    QString engineLocalModel_;
     QString enginePiperModelPath_;
     QString enginePiperConfigPath_;
     double enginePiperSpeed_ = -1.0;

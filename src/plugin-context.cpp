@@ -12,6 +12,7 @@
 #include "audio-source.hpp"
 #include "chat-client.hpp"
 #include "espeak-engine.hpp"
+#include "local-tts-engine.hpp"
 #include "paths.hpp"
 #include "tts-engine.hpp"
 #include "tts-worker.hpp"
@@ -234,7 +235,7 @@ bool PluginContext::ensureWorker(QString *error)
     }
 
     const bool piperRequested =
-        settings_.ttsEngine.trimmed().compare(QLatin1String("espeak"), Qt::CaseInsensitive) != 0;
+        settings_.ttsEngine.trimmed().compare(QLatin1String("piper"), Qt::CaseInsensitive) == 0;
     TtsBackend backend = TtsBackend::Espeak;
     QString fallbackReason;
     PiperResources piper;
@@ -280,6 +281,15 @@ bool PluginContext::ensureWorker(QString *error)
 #endif
     }
 
+    if (backend == TtsBackend::Local) {
+        auto local = std::make_unique<LocalTtsEngine>(
+            settings_.localTtsUrl, settings_.localTtsVoice, settings_.localTtsModel);
+        installWorker(std::move(local));
+        emit logLine(QStringLiteral("tts engine: local server (") + settings_.localTtsUrl +
+                     QLatin1Char(')'));
+        emit logLine(QStringLiteral("local tts voice: ") + settings_.localTtsVoice);
+    }
+
     if (backend == TtsBackend::Espeak) {
         QString reason = fallbackReason;
         if (reason.isEmpty() && piperRequested) {
@@ -312,6 +322,9 @@ bool PluginContext::ensureWorker(QString *error)
 
     engineSelection_ = settings_.ttsEngine;
     enginePiperVoice_ = settings_.piperVoice;
+    engineLocalUrl_ = settings_.localTtsUrl;
+    engineLocalVoice_ = settings_.localTtsVoice;
+    engineLocalModel_ = settings_.localTtsModel;
     enginePiperModelPath_ = settings_.piperModelPath;
     enginePiperConfigPath_ = settings_.piperConfigPath;
     enginePiperSpeed_ = settings_.piperSpeed;
@@ -379,6 +392,9 @@ bool PluginContext::engineSettingsDiffer() const
 {
     return worker_ && (settings_.ttsEngine != engineSelection_ ||
                        settings_.piperVoice != enginePiperVoice_ ||
+                       settings_.localTtsUrl != engineLocalUrl_ ||
+                       settings_.localTtsVoice != engineLocalVoice_ ||
+                       settings_.localTtsModel != engineLocalModel_ ||
                        settings_.piperModelPath != enginePiperModelPath_ ||
                        settings_.piperConfigPath != enginePiperConfigPath_ ||
                        settings_.piperSpeed != enginePiperSpeed_ ||

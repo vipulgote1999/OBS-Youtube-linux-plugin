@@ -22,6 +22,8 @@ public:
 
     bool synthesize(const QString &text, std::vector<float> *pcm, int *sampleRate,
                     QString *error) override;
+    bool synthesizeStreaming(const QString &text, const ChunkSink &sink, int *sampleRate,
+                             QString *error) override;
     void cancel() override;
     void resetCancel() override;
 
@@ -33,6 +35,7 @@ public:
     bool initializationFailed() const override;
 
 private:
+    float lengthScale() const;
     std::unique_ptr<PiperApi> api_;
     int rate_;
     float speed_ = 0.0f;

@@ -18,6 +18,7 @@ class TestTtsBackend : public QObject {
 private slots:
     void missingPiperModelSelectsEspeak();
     void explicitEspeakNeverSelectsPiper();
+    void explicitLocalSelectsLocal();
     void piperWithModelSelectsPiper();
     void unrecognisedEngineBehavesLikePiper();
 };
@@ -37,6 +38,14 @@ void TestTtsBackend::explicitEspeakNeverSelectsPiper()
 
     QCOMPARE(chooseTtsBackend(settings, true), TtsBackend::Espeak);
     QCOMPARE(chooseTtsBackend(settings, false), TtsBackend::Espeak);
+}
+
+void TestTtsBackend::explicitLocalSelectsLocal()
+{
+    Settings settings;
+    settings.ttsEngine = QStringLiteral("local");
+    QCOMPARE(chooseTtsBackend(settings, true), TtsBackend::Local);
+    QCOMPARE(chooseTtsBackend(settings, false), TtsBackend::Local);
 }
 
 void TestTtsBackend::piperWithModelSelectsPiper()

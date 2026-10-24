@@ -32,11 +32,16 @@ public:
 
     bool synthesize(const QString &text, float lengthScale, std::vector<float> *pcm,
                     int *sampleRate, QString *error) override;
+    bool synthesizeStreaming(const QString &text, float lengthScale, const ChunkSink &sink,
+                             int *sampleRate, QString *error) override;
     void cancel() override;
     void resetCancel() override;
     bool initializationFailed() const override;
 
 private:
+    /* Shared implementation.  Exactly one of pcm/sink is non-null. */
+    bool run(const QString &text, float lengthScale, std::vector<float> *pcm,
+             const ChunkSink *sink, int *sampleRate, QString *error);
     bool ensureSynthesizer(QString *error);
     // Frees and nulls synthesizer_; callers must hold synthesizerMutex_.
     void destroySynthesizerLocked() noexcept;

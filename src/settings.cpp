@@ -33,7 +33,13 @@ void clampValues(Settings *settings)
     settings->pitch = qBound(kPitchMin, settings->pitch, kPitchMax);
     settings->amplitude = qBound(kPitchMin, settings->amplitude, kPitchMax);
     settings->volume = qBound(kVolumeMin, settings->volume, kVolumeMax);
-    settings->piperSpeed = qBound(0.0, settings->piperSpeed, 3.0);
+    /* A saved 0.00 (or a negative value) made Piper synthesize at one-third
+     * speed, which sounds stretched and is the most common cause of "low
+     * quality" reports.  Treat it as "unset" and migrate to the natural pace;
+     * the slider still allows 0.25x-3.00x for deliberate extremes. */
+    if (settings->piperSpeed <= 0.0)
+        settings->piperSpeed = 1.0;
+    settings->piperSpeed = qBound(0.25, settings->piperSpeed, 3.0);
     settings->userCooldownSec =
         qBound(kUserCooldownMin, settings->userCooldownSec, kUserCooldownMax);
     settings->globalCooldownSec =
@@ -46,10 +52,24 @@ void clampValues(Settings *settings)
     }
 
     /* Existing settings files predate ttsEngine; an absent or unrecognised
-     * value falls back to Piper, while an explicit espeak choice is kept. */
+     * value falls back to Piper, while explicit espeak/local choices are kept. */
     const QString engine = settings->ttsEngine.trimmed().toLower();
-    settings->ttsEngine =
-        engine == QLatin1String("espeak") ? QStringLiteral("espeak") : QStringLiteral("piper");
+    if (engine == QLatin1String("espeak"))
+        settings->ttsEngine = QStringLiteral("espeak");
+    else if (engine == QLatin1String("local"))
+        settings->ttsEngine = QStringLiteral("local");
+    else
+        settings->ttsEngine = QStringLiteral("piper");
+
+    settings->localTtsUrl = settings->localTtsUrl.trimmed();
+    if (settings->localTtsUrl.isEmpty())
+        settings->localTtsUrl = QStringLiteral("http://127.0.0.1:8765");
+    settings->localTtsVoice = settings->localTtsVoice.trimmed();
+    if (settings->localTtsVoice.isEmpty())
+        settings->localTtsVoice = QStringLiteral("af_heart");
+    settings->localTtsModel = settings->localTtsModel.trimmed();
+    if (settings->localTtsModel.isEmpty())
+        settings->localTtsModel = QStringLiteral("tts-1");
 
     settings->piperVoice = settings->piperVoice.trimmed();
     if (settings->piperVoice.isEmpty())
@@ -117,6 +137,10 @@ Settings Settings::fromObsData(obs_data_t *data)
     settings.piperModelPath = readString("piperModelPath", settings.piperModelPath);
     settings.piperConfigPath = readString("piperConfigPath", settings.piperConfigPath);
     settings.piperSpeed = readDouble("piperSpeed", settings.piperSpeed);
+    settings.streamAudio = readBool("streamAudio", settings.streamAudio);
+    settings.localTtsUrl = readString("localTtsUrl", settings.localTtsUrl);
+    settings.localTtsVoice = readString("localTtsVoice", settings.localTtsVoice);
+    settings.localTtsModel = readString("localTtsModel", settings.localTtsModel);
     settings.rate = readInt("rate", settings.rate);
     settings.pitch = readInt("pitch", settings.pitch);
     settings.amplitude = readInt("amplitude", settings.amplitude);
@@ -155,6 +179,10 @@ obs_data_t *Settings::toObsData() const
     obs_data_set_string(data, "piperModelPath", piperModelPath.toUtf8().constData());
     obs_data_set_string(data, "piperConfigPath", piperConfigPath.toUtf8().constData());
     obs_data_set_double(data, "piperSpeed", piperSpeed);
+    obs_data_set_bool(data, "streamAudio", streamAudio);
+    obs_data_set_string(data, "localTtsUrl", localTtsUrl.toUtf8().constData());
+    obs_data_set_string(data, "localTtsVoice", localTtsVoice.toUtf8().constData());
+    obs_data_set_string(data, "localTtsModel", localTtsModel.toUtf8().constData());
     obs_data_set_int(data, "rate", rate);
     obs_data_set_int(data, "pitch", pitch);
     obs_data_set_int(data, "amplitude", amplitude);
@@ -283,6 +311,8 @@ Settings Settings::loadFromFile(const QString &path, QString *error)
 
 TtsBackend chooseTtsBackend(const Settings &settings, bool piperModelPresent)
 {
+    if (settings.ttsEngine.trimmed().compare(QLatin1String("local"), Qt::CaseInsensitive) == 0)
+        return TtsBackend::Local;
     if (settings.ttsEngine.trimmed().compare(QLatin1String("espeak"), Qt::CaseInsensitive) == 0)
         return TtsBackend::Espeak;
     if (!piperModelPresent)
