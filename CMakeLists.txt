@@ -39,6 +39,12 @@ add_library(yt-chat-tts MODULE
     src/tts-queue.cpp
     src/wav.cpp
     src/espeak-engine.cpp
+    src/speech-conditioner.cpp
+    src/speech-conditioner.hpp
+    src/audio-resampler.cpp
+    src/audio-resampler.hpp
+    src/local-tts-engine.cpp
+    src/local-tts-engine.hpp
     src/audio-buffer.cpp
     src/audio-bus.cpp
     src/audio-source.cpp
@@ -305,12 +311,39 @@ if(BUILD_TESTING)
 
     add_test(NAME test_audio_buffer COMMAND test_audio_buffer)
 
+    add_executable(test_speech_conditioner
+        tests/test_speech_conditioner.cpp
+        src/speech-conditioner.cpp
+    )
+
+    target_include_directories(test_speech_conditioner PRIVATE src)
+    target_link_libraries(test_speech_conditioner PRIVATE
+        Qt6::Core
+        Qt6::Test
+    )
+
+    add_test(NAME test_speech_conditioner COMMAND test_speech_conditioner)
+
+    add_executable(test_audio_resampler
+        tests/test_audio_resampler.cpp
+        src/audio-resampler.cpp
+    )
+
+    target_include_directories(test_audio_resampler PRIVATE src)
+    target_link_libraries(test_audio_resampler PRIVATE
+        Qt6::Core
+        Qt6::Test
+    )
+
+    add_test(NAME test_audio_resampler COMMAND test_audio_resampler)
+
     add_executable(test_tts_worker
         tests/test_tts_worker.cpp
         src/tts-worker.hpp
         src/tts-worker.cpp
         src/tts-queue.cpp
         src/audio-buffer.cpp
+        src/speech-conditioner.cpp
         src/text-normalizer.cpp
     )
 
