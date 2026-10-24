@@ -225,6 +225,9 @@ YtChatTtsDock::YtChatTtsDock(PluginContext *context, QWidget *parent)
                           QStringLiteral("piper"));
     engineCombo_->addItem(uiText("Voice.EngineEspeak", "espeak-ng — fast fallback"),
                           QStringLiteral("espeak"));
+    engineCombo_->addItem(
+        uiText("Voice.EngineLocal", "Local server — Kokoro / Pocket (experimental)"),
+        QStringLiteral("local"));
     voiceForm->addRow(uiText("Voice.Engine", "Engine"), engineCombo_);
 
     piperVoiceCombo_ = new QComboBox(voiceGroup);
@@ -232,6 +235,27 @@ YtChatTtsDock::YtChatTtsDock(PluginContext *context, QWidget *parent)
         uiText("Voice.PiperVoiceLjspeech", "LJSpeech — US female (medium)"),
         QStringLiteral("en_US-ljspeech-medium"));
     voiceForm->addRow(uiText("Voice.PiperVoice", "Piper voice"), piperVoiceCombo_);
+
+    streamCheck_ = new QCheckBox(
+        uiText("Voice.StreamAudio", "Low-latency streaming (Piper)"), voiceGroup);
+    streamCheck_->setToolTip(uiText(
+        "Voice.StreamAudioTooltip",
+        "Send each synthesized chunk to OBS as it is produced instead of "
+        "waiting for the whole message. Starts speech sooner; the audio is "
+        "identical."));
+    voiceForm->addRow(streamCheck_);
+
+    localUrlEdit_ = new QLineEdit(voiceGroup);
+    localUrlEdit_->setPlaceholderText(QStringLiteral("http://127.0.0.1:8765"));
+    voiceForm->addRow(uiText("Voice.LocalUrl", "Server URL"), localUrlEdit_);
+
+    localVoiceEdit_ = new QLineEdit(voiceGroup);
+    localVoiceEdit_->setPlaceholderText(QStringLiteral("af_heart"));
+    voiceForm->addRow(uiText("Voice.LocalVoice", "Server voice"), localVoiceEdit_);
+
+    localModelEdit_ = new QLineEdit(voiceGroup);
+    localModelEdit_->setPlaceholderText(QStringLiteral("tts-1"));
+    voiceForm->addRow(uiText("Voice.LocalModel", "Server model"), localModelEdit_);
 
     voiceCombo_ = new QComboBox(voiceGroup);
     voiceCombo_->setEditable(true);
@@ -503,6 +527,10 @@ YtChatTtsDock::YtChatTtsDock(PluginContext *context, QWidget *parent)
             &YtChatTtsDock::onControlChanged);
     connect(piperVoiceCombo_, &QComboBox::currentIndexChanged, this,
             &YtChatTtsDock::onControlChanged);
+    connect(streamCheck_, &QCheckBox::toggled, this, &YtChatTtsDock::onControlChanged);
+    connect(localUrlEdit_, &QLineEdit::textChanged, this, &YtChatTtsDock::onControlChanged);
+    connect(localVoiceEdit_, &QLineEdit::textChanged, this, &YtChatTtsDock::onControlChanged);
+    connect(localModelEdit_, &QLineEdit::textChanged, this, &YtChatTtsDock::onControlChanged);
     connect(voiceCombo_, &QComboBox::currentTextChanged, this,
             &YtChatTtsDock::onControlChanged);
     connect(rateSlider_, &QSlider::valueChanged, this, &YtChatTtsDock::onControlChanged);
@@ -585,6 +613,11 @@ void YtChatTtsDock::applySettingsToControls()
     }
     piperVoiceCombo_->setCurrentIndex(piperVoiceIndex);
 
+    streamCheck_->setChecked(settings.streamAudio);
+    localUrlEdit_->setText(settings.localTtsUrl);
+    localVoiceEdit_->setText(settings.localTtsVoice);
+    localModelEdit_->setText(settings.localTtsModel);
+
     voiceCombo_->setCurrentText(settings.voice);
     rateSlider_->setValue(settings.rate);
     piperSpeedSlider_->setValue(qRound(settings.piperSpeed * 100.0));
@@ -620,8 +653,13 @@ Settings YtChatTtsDock::settingsFromControls() const
     settings.videoUrl = urlEdit_->text().trimmed();
     settings.voice = voiceCombo_->currentText().trimmed();
     const QString engine = engineCombo_->currentData().toString();
-    settings.ttsEngine =
-        engine == QLatin1String("espeak") ? QStringLiteral("espeak") : QStringLiteral("piper");
+    settings.ttsEngine = engine == QLatin1String("espeak") || engine == QLatin1String("local")
+                             ? engine
+                             : QStringLiteral("piper");
+    settings.streamAudio = streamCheck_->isChecked();
+    settings.localTtsUrl = localUrlEdit_->text().trimmed();
+    settings.localTtsVoice = localVoiceEdit_->text().trimmed();
+    settings.localTtsModel = localModelEdit_->text().trimmed();
     settings.piperVoice = piperVoiceCombo_->currentData().toString().trimmed();
     if (settings.piperVoice.isEmpty())
         settings.piperVoice = QStringLiteral("en_US-ljspeech-medium");
@@ -673,7 +711,9 @@ void YtChatTtsDock::onControlChanged()
     updateValueLabels();
 
     QObject *changed = sender();
-    const bool engineSelection = changed == engineCombo_ || changed == piperVoiceCombo_;
+    const bool engineSelection = changed == engineCombo_ || changed == piperVoiceCombo_ ||
+                                 changed == localUrlEdit_ || changed == localVoiceEdit_ ||
+                                 changed == localModelEdit_;
     const bool engineControl = changed == voiceCombo_ || changed == rateSlider_ ||
                                changed == piperSpeedSlider_ ||
                                changed == pitchSlider_ || changed == amplitudeSlider_ ||
@@ -858,40 +898,51 @@ void YtChatTtsDock::updateValueLabels()
 
 void YtChatTtsDock::updateEngineControls()
 {
-    const bool piper = engineCombo_->currentData().toString() != QLatin1String("espeak");
+    const QString engine = engineCombo_->currentData().toString();
+    const bool piper = engine == QLatin1String("piper");
+    const bool espeak = engine == QLatin1String("espeak");
+    const bool local = engine == QLatin1String("local");
 
-    /* Each engine keeps its own voice control so switching back and forth
-     * never overwrites the other engine's saved choice.  Only the active
-     * engine's controls are visible; the basic view stays short. */
+    /* Each engine keeps its own controls so switching back and forth never
+     * overwrites the other engine's saved choice. */
     piperVoiceCombo_->setEnabled(piper);
-    voiceCombo_->setEnabled(!piper);
+    voiceCombo_->setEnabled(espeak);
     setFormRowVisible(voiceForm_, piperVoiceCombo_, piper);
-    setFormRowVisible(voiceForm_, voiceCombo_, !piper);
+    setFormRowVisible(voiceForm_, voiceCombo_, espeak);
 
-    setFormRowVisible(voiceForm_, rateRow_, !piper);
+    setFormRowVisible(voiceForm_, rateRow_, espeak);
     setFormRowVisible(voiceForm_, speedRow_, piper);
 
-    /* Piper has no pitch/amplitude knobs; its voice model fixes them. */
+    /* Piper fixes pitch/amplitude in the model; the local server has its own
+     * voice controls. */
     const QString tooltip =
-        piper ? uiText("Voice.PiperFixedTooltip",
-                       "Pitch and amplitude are fixed for Piper voices.")
-              : QString();
-    pitchSlider_->setEnabled(!piper);
-    amplitudeSlider_->setEnabled(!piper);
+        piper
+            ? uiText("Voice.PiperFixedTooltip",
+                     "Pitch and amplitude are fixed for Piper voices.")
+            : local ? uiText("Voice.LocalFixedTooltip",
+                             "Pitch and amplitude are controlled by the local server.")
+                    : QString();
+    pitchSlider_->setEnabled(espeak);
+    amplitudeSlider_->setEnabled(espeak);
     pitchSlider_->setToolTip(tooltip);
     amplitudeSlider_->setToolTip(tooltip);
+    streamCheck_->setEnabled(piper);
+
     const bool showAdvanced = advancedVoiceCheck_ && advancedVoiceCheck_->isChecked();
     if (advancedVoiceCheck_)
-        advancedVoiceCheck_->setVisible(!piper);
-    setFormRowVisible(voiceForm_, pitchRow_, !piper && showAdvanced);
-    setFormRowVisible(voiceForm_, amplitudeRow_, !piper && showAdvanced);
+        advancedVoiceCheck_->setVisible(espeak);
+    setFormRowVisible(voiceForm_, pitchRow_, espeak && showAdvanced);
+    setFormRowVisible(voiceForm_, amplitudeRow_, espeak && showAdvanced);
+    setFormRowVisible(voiceForm_, localUrlEdit_, local);
+    setFormRowVisible(voiceForm_, localVoiceEdit_, local);
+    setFormRowVisible(voiceForm_, localModelEdit_, local);
     updateValueLabels();
 }
 
 void YtChatTtsDock::onResetVoiceClicked()
 {
     rateSlider_->setValue(165);
-    piperSpeedSlider_->setValue(85);
+    piperSpeedSlider_->setValue(100);
     pitchSlider_->setValue(50);
     amplitudeSlider_->setValue(150);
     volumeSlider_->setValue(100);

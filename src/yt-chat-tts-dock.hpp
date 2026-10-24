@@ -104,6 +104,10 @@ private:
     QCheckBox *advancedVoiceCheck_ = nullptr;
     QWidget *pitchRow_ = nullptr;
     QWidget *amplitudeRow_ = nullptr;
+    QLineEdit *localUrlEdit_ = nullptr;
+    QLineEdit *localVoiceEdit_ = nullptr;
+    QLineEdit *localModelEdit_ = nullptr;
+    QCheckBox *streamCheck_ = nullptr;
     QCheckBox *readAuthorCheck_ = nullptr;
     QLineEdit *authorTemplateEdit_ = nullptr;
     QPushButton *testVoiceButton_ = nullptr;

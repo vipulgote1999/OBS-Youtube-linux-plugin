@@ -7,6 +7,7 @@
 
 #include "audio-buffer.hpp"
 #include "chat-message.hpp"
+#include "speech-conditioner.hpp"
 #include "text-normalizer.hpp"
 #include "tts-engine.hpp"
 #include "tts-queue.hpp"
@@ -123,10 +124,58 @@ void TtsWorker::run()
         speaking = true;
         emit statusChanged(QStringLiteral("speaking: ") + msg.author);
 
-        std::vector<float> pcm;
         int sampleRate = 0;
         QString error;
-        const bool synthesized = engine_->synthesize(text, &pcm, &sampleRate, &error);
+        bool synthesized = false;
+
+        if (settings.streamAudio) {
+            /* Push each Piper chunk as it arrives.  The conditioner keeps its
+             * DC-blocker state across chunks and fades only the first and last
+             * one, so chunk boundaries stay click-free. */
+            SpeechConditioner::Stream conditioner({kExpectedSampleRate});
+            bool first = true;
+            bool sinkStopped = false;
+            bool rateMismatch = false;
+
+            const auto sink = [&](const float *samples, size_t count, bool isLast) -> bool {
+                if (!running_.load()) {
+                    sinkStopped = true;
+                    return false;
+                }
+                if (sampleRate != 0 && sampleRate != kExpectedSampleRate) {
+                    rateMismatch = true;
+                    return false;
+                }
+                std::vector<float> chunk(samples, samples + count);
+                conditioner.process(&chunk, first, isLast);
+                first = false;
+                if (!chunk.empty())
+                    audio_.push(chunk.data(), chunk.size());
+                return true;
+            };
+
+            synthesized = engine_->synthesizeStreaming(text, sink, &sampleRate, &error);
+            if (sinkStopped)
+                break;
+            if (rateMismatch) {
+                emit errorOccurred(
+                    QStringLiteral("speech engine returned %1 Hz; expected %2 Hz")
+                        .arg(sampleRate)
+                        .arg(kExpectedSampleRate));
+                continue;
+            }
+        } else {
+            std::vector<float> pcm;
+            synthesized = engine_->synthesize(text, &pcm, &sampleRate, &error);
+            if (!running_.load())
+                break;
+            if (synthesized && sampleRate == kExpectedSampleRate && !pcm.empty()) {
+                SpeechConditioner::Config conditioner;
+                conditioner.sampleRate = sampleRate;
+                SpeechConditioner::process(&pcm, conditioner);
+                audio_.push(pcm.data(), pcm.size());
+            }
+        }
 
         /* A stop() during synthesis turns the engine's failure into a normal
          * shutdown; swallowing it keeps the UI free of spurious errors. */
@@ -173,9 +222,6 @@ void TtsWorker::run()
          * happened meanwhile never appends stale audio. */
         if (!running_.load())
             break;
-
-        if (!pcm.empty())
-            audio_.push(pcm.data(), pcm.size());
 
         if (queue_.size() == 0) {
             speaking = false;

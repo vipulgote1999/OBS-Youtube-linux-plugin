@@ -27,9 +27,14 @@ the experimental keyless InnerTube provider.
 - **Offline neural speech** through a bundled Piper `libpiper` + ONNX Runtime
   runtime and the public-domain `en_US-ljspeech-medium` voice. Synthesis is
   CPU-only and the model is loaded once per worker, not per message.
-- **Engine selector**: `Piper — natural (CPU)` (default) or
-  `espeak-ng — fast fallback`; the audio is fed to a native OBS input source
-  named `YouTube Chat TTS`.
+- **Engine selector**: `Piper — natural (CPU)` (default), `espeak-ng — fast
+  fallback`, or `Local server — Kokoro / Pocket (experimental)`; the audio is
+  fed to a native OBS input source named `YouTube Chat TTS`.
+- **Low-latency streaming** for Piper: each sentence is pushed to OBS as it is
+  synthesized instead of after the whole message. Toggle it off in the dock.
+- **Local high-quality engines**: point the plugin at an OpenAI-compatible TTS
+  server you run (Kokoro, Pocket TTS, ...) to get a noticeably better voice
+  without bundling a second model.
 - **espeak-ng fallback** through the bundled 1.51 executable whenever the Piper
   model/config/espeak data is missing or corrupt, or Piper initialization
   fails after the plugin has loaded. The dock logs the reason.
@@ -197,6 +202,8 @@ Open **Docks → YouTube Chat TTS**.
    source manually with **Sources → + → YouTube Chat TTS**; the plugin does not
    create a second copy if one already exists.
 2. Set **Engine**, **Voice**, **Rate**, **Pitch**, **Amplitude** and **Volume**.
+   For the local server, also set **Server URL**, **Server voice** and **Server
+   model**; see [Local server](#local-server-kokoro--pocket-tts).
    **Test Voice** speaks a test sentence through the audio source, so use it to
    check levels and recording before going live. With no source added, Test
    Voice is buffered but silent; the dock warns about that.
@@ -218,27 +225,59 @@ file is unaffected.
 
 ### Speech engines, voice and rate
 
-The **Engine** selector has two entries:
+The **Engine** selector has three entries:
 
 | Engine | Voice | Notes |
 | --- | --- | --- |
 | `Piper — natural (CPU)` (default) | `LJSpeech — US female (medium)` | Bundled `en_US-ljspeech-medium` model, 22,050 Hz mono float, public-domain LJ Speech dataset. CPU-only; the model is loaded once per worker. |
 | `espeak-ng — fast fallback` | Existing espeak-ng English voices | Small and fast; robotic formant synthesis. |
+| `Local server — Kokoro / Pocket (experimental)` | Whatever the server offers | Talks to a local OpenAI-compatible `/v1/audio/speech` endpoint. The best quality option; the model runs outside the plugin. |
 
 Only the LJSpeech Piper voice is bundled. The commonly suggested
 `en_US-lessac-medium` voice is **not** included because its Lessac/Blizzard
 dataset license is research-only and cannot be redistributed in a public
-release. Adding another voice is not supported in this version.
+release. `en_US-ryan-high` is CC BY-NC-SA and is also excluded.
+
+### Local server (Kokoro / Pocket TTS)
+
+The local engine is the quality path. Kokoro and Pocket TTS sound considerably
+better than the bundled Piper voice, but their weights are large and their
+licences differ, so the plugin does not ship them. Run one on the same machine:
+
+- **Kokoro** (Apache-2.0):
+  `docker run -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-cpu`, then set
+  **Server URL** to `http://127.0.0.1:8880/v1/audio/speech`, **Server voice**
+  to `af_heart`, and **Server model** to `kokoro`.
+- **Pocket TTS** (CC-BY-4.0 weights, gated on Hugging Face): run
+  `pocket-tts serve` or `PocketTTS.cpp --server` and point **Server URL** at the
+  server's `/v1/audio/speech` endpoint. The first request may download weights.
+
+The server returns 24 kHz audio; the plugin decodes the WAV and resamples it to
+the 22,050 Hz OBS source with a windowed-sinc filter. If the server is not
+running, the dock logs the connection error per message and keeps the queue.
+Start the server and the next message works without restarting OBS.
+
+Pocket is deliberately not bundled: its sherpa/ONNX bundle is a January 2026
+checkpoint, and one measured utterance hung inside the model for over two
+minutes without ever invoking its progress callback. A separate process can be
+killed; the plugin cannot cancel that safely in-process. Keeping it behind a
+local server also keeps the model licence and the ~100 MB of weights out of the
+Flatpak.
 
 How the controls apply:
 
-- **Rate** is engine-specific. For Piper it maps to the model's `length_scale`
-  as `165 / rate`, clamped to `0.5–2.0`; the UI's 80–450 range therefore stays
-  valid and higher values speak faster. The rate is baked into the speech
-  worker, so changing it restarts that worker while keeping the queue.
+- **Rate** is engine-specific. For Piper, the **Speed** slider multiplies the
+  model's `length_scale` (`1.00x` is the model's natural pace). The default is
+  `1.00x`; values below `1.00x` drag the voice and are the most common cause of
+  a "low quality" first impression. A saved `0.00` is migrated to `1.00` when
+  settings load, because `0.00` stretched the voice to one-third speed. The
+  default espeak **Rate** is 165.
 - **Pitch** and **Amplitude** are espeak-only. They are disabled (greyed) for
-  Piper with an explanatory tooltip; the model has no pitch/amplitude controls.
-- **Volume** still applies to both engines and is owned by the audio buffer.
+  Piper and the local server with an explanatory tooltip.
+- **Low-latency streaming** applies to Piper. libpiper emits one chunk per
+  sentence, so multi-sentence messages start speaking sooner; a one-sentence
+  message is unchanged. The audio is identical and still DC-blocked and faded.
+- **Volume** applies to every engine and is owned by the audio buffer.
 - Changing **Engine** or **Voice** restarts the speech worker so the next
   utterance uses the new selection; the chat connection is not dropped.
 
@@ -253,7 +292,9 @@ mode.
 
 `YouTube Chat TTS` is a normal OBS audio input source, so it appears in the
 Audio Mixer and can be routed, filtered and monitored like any other source.
-To record it:
+Every synthesized utterance is DC-blocked and faded in/out over 5 ms before it
+reaches the source, so a clip that stops mid-waveform does not click when the
+buffer falls silent. To record it:
 
 1. Confirm the source is in the active scene and not muted in the Audio Mixer.
 2. Set its volume there (the dock's **Volume** control scales the same signal).
@@ -352,9 +393,11 @@ dock's **Log** pane mirrors the important status and error lines.
 | `Network error; retrying` | Transient DNS/TLS/transport problem; wait for the capped backoff. If it persists, check connectivity to `youtube.googleapis.com` and the gRPC endpoint. |
 | Helper not found / chat never connects | Rebuild with `./scripts/build-helper.sh && ./scripts/build-flatpak.sh`; the Flatpak build now refuses to proceed without the helper. |
 | Audio stutters or lags behind chat | Lower the message rate/size filters, shorten **Max length**, or raise the **Queue limit** cautiously. Both engines are CPU-bound; Piper is more expensive per character. |
-| Spoken voice is robotic, not the natural voice | **Engine** is set to espeak-ng, or the dock logged a Piper fallback reason. Select `Piper — natural (CPU)` and fix the reported missing/corrupt model or initialization error. |
+| Spoken voice is robotic or draggy | **Engine** is espeak-ng, **Speed** is below `1.00x`, or the dock logged a Piper fallback reason. Select `Piper`, set **Speed** to `1.00x`, and fix the reported model error. For a clearly better voice, use the **Local server** engine with Kokoro. |
+| Local server engine logs `not reachable` | The Kokoro/Pocket server is not running or the URL/port is wrong. Start it, check the URL ends at `/v1/audio/speech`, and press **Test Voice**. The plugin retries on the next message; OBS does not need a restart. |
+| Local server returns HTTP 4xx/5xx | The server rejects the voice/model names. Check **Server voice** and **Server model** against the server's documentation (`af_heart`/`kokoro` for Kokoro-FastAPI). |
 | Dock logs a Piper fallback or `piper model not found` | The extension is incomplete or a custom `piperModelPath`/`piperConfigPath` is wrong. Reinstall with `./scripts/build-flatpak.sh`, run `./scripts/smoke-flatpak.sh`, and clear the path overrides. |
-| Piper is slow on old hardware | Piper is CPU-only and the model is 61 MB. Use espeak-ng, shorten **Max length**, or reduce chat volume. The 200-character reference target is under 1.5 s steady-state after the model load. |
+| Piper is slow on old hardware | Piper is CPU-only and the model is 61 MB. Enable **Low-latency streaming**, use espeak-ng, shorten **Max length**, or reduce chat volume. The 200-character reference target is under 1.5 s steady-state after the model load. |
 | Rebuild fails after an OBS update | OBS/runtime ABI changes require rebuilding the extension. Run the clean rebuild commands above. |
 | Build fails with a mount or busy error | A previous Flatpak build mount is stale. `flatpak kill com.obsproject.Studio`, remove any leftover `build-flatpak` directory, and rerun `scripts/build-flatpak.sh`. Do not delete `~/.var/app/com.obsproject.Studio`. |
 

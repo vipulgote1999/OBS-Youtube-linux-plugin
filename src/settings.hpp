@@ -25,7 +25,17 @@ struct Settings {
     QString piperVoice = QStringLiteral("en_US-ljspeech-medium");
     QString piperModelPath;
     QString piperConfigPath;
-    double piperSpeed = 0.85;
+    double piperSpeed = 1.0;
+    /* Stream Piper chunks to the audio buffer as they arrive instead of
+     * waiting for the whole utterance.  Strictly a latency improvement, so it
+     * is on by default and exposed as a checkbox. */
+    bool streamAudio = true;
+    /* Experimental local OpenAI-compatible TTS server (Kokoro, Pocket TTS,
+     * Kokoro-FastAPI, ...).  The plugin never bundles those models; the user
+     * runs the server and points us at it. */
+    QString localTtsUrl = QStringLiteral("http://127.0.0.1:8765");
+    QString localTtsVoice = QStringLiteral("af_heart");
+    QString localTtsModel = QStringLiteral("tts-1");
     int rate = 165;
     int pitch = 50;
     int amplitude = 150;
@@ -65,7 +75,7 @@ struct Settings {
 };
 
 /** Speech backend actually used by the TTS worker. */
-enum class TtsBackend { Piper, Espeak };
+enum class TtsBackend { Piper, Espeak, Local };
 
 /**
  * Chooses the backend from the persisted engine choice and Piper availability.
