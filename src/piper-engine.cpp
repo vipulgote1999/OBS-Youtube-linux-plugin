@@ -7,7 +7,6 @@
 namespace {
 constexpr int kPiperSampleRate = 22050;
 constexpr float kBaseRate = 165.0f;
-constexpr float kMinLengthScale = 1.0f / 3.0f;
 constexpr float kMaxLengthScale = 3.0f;
 
 bool fail(QString *error, const QString &message)
@@ -88,12 +87,15 @@ float PiperEngine::lengthScale() const
     /* Piper's length_scale is the inverse of playback speed: 1.0 is normal,
      * 3.0 is one-third speed, 1/3 is triple speed.  The UI speed is the
      * familiar multiplier (3.0x = three times as fast), so invert it here.
-     * A zero (or negative) speed is treated as the slowest supported speed. */
-    if (speed_ > 0.0f)
-        return qBound(kMinLengthScale, 1.0f / speed_, kMaxLengthScale);
-    if (speed_ == 0.0f)
-        return kMaxLengthScale;
-    return qBound(kMinLengthScale, kBaseRate / float(rate_), kMaxLengthScale);
+     * A zero speed is the slowest supported speed; values below 0.5 are
+     * clamped to 0.5 because they sound stretched. */
+    if (speedSet_) {
+        if (speed_ <= 0.0f)
+            return kMaxLengthScale;
+        return 1.0f / qBound(0.5f, speed_, 3.0f);
+    }
+    /* Legacy mapping for callers that never set a speed. */
+    return qBound(0.5f, kBaseRate / float(rate_), 2.0f);
 }
 
 void PiperEngine::cancel()
@@ -111,6 +113,7 @@ void PiperEngine::resetCancel()
 void PiperEngine::setSpeed(float speed)
 {
     speed_ = speed;
+    speedSet_ = true;
 }
 
 bool PiperEngine::initializationFailed() const

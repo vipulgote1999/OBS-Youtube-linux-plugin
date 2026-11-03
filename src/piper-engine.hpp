@@ -38,5 +38,9 @@ private:
     float lengthScale() const;
     std::unique_ptr<PiperApi> api_;
     int rate_;
+    /* A default-constructed engine uses the legacy rate -> length-scale
+     * mapping.  setSpeed() distinguishes an explicit 0.0 (slowest) from
+     * "no speed configured". */
     float speed_ = 0.0f;
+    bool speedSet_ = false;
 };
