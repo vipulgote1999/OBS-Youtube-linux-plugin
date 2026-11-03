@@ -20,12 +20,10 @@ struct Settings {
     QString provider = QStringLiteral("auto");
     QString apiKey;
     QString videoUrl;
-    QString voice = QStringLiteral("en-us");
-    QString ttsEngine = QStringLiteral("piper");
-    QString piperVoice = QStringLiteral("en_US-ljspeech-medium");
-    QString piperModelPath;
-    QString piperConfigPath;
-    double piperSpeed = 1.0;
+    /* Supertonic is the only bundled engine; "local" selects the experimental
+     * OpenAI-compatible server path.  Old "piper"/"espeak" values migrate to
+     * Supertonic when settings load. */
+    QString ttsEngine = QStringLiteral("supertonic");
     /* Bundled Supertonic 3 engine.  Voice is one of the ten model styles
      * (F1-F5, M1-M5); the model path is a development override for an
      * unpacked model directory. */
@@ -34,9 +32,9 @@ struct Settings {
     /* 0.9-1.5 is the model's natural range; lower values add long pauses. */
     double supertonicSpeed = 1.0;
     int supertonicSteps = 8;
-    /* Stream Piper chunks to the audio buffer as they arrive instead of
-     * waiting for the whole utterance.  Strictly a latency improvement, so it
-     * is on by default and exposed as a checkbox. */
+    /* Stream each synthesized sentence to the audio buffer as it arrives
+     * instead of waiting for the whole utterance.  Strictly a latency
+     * improvement, so it is on by default and exposed as a checkbox. */
     bool streamAudio = true;
     /* Experimental local OpenAI-compatible TTS server (Kokoro, Pocket TTS,
      * Kokoro-FastAPI, ...).  The plugin never bundles those models; the user
@@ -44,9 +42,6 @@ struct Settings {
     QString localTtsUrl = QStringLiteral("http://127.0.0.1:8765");
     QString localTtsVoice = QStringLiteral("af_heart");
     QString localTtsModel = QStringLiteral("tts-1");
-    int rate = 165;
-    int pitch = 50;
-    int amplitude = 150;
     double volume = 1.0;
     bool readAuthor = true;
     QString authorTemplate = QStringLiteral("{author} says: {message}");
@@ -64,7 +59,6 @@ struct Settings {
     bool readModerators = true;
     bool autoConnect = false;
     QString helperPath;
-    QString espeakPath;
 
     /* Loads <module config dir>/settings.json.  Missing or invalid files fall
      * back to defaults. */
@@ -81,18 +75,3 @@ struct Settings {
 
     ChatConfig toChatConfig() const;
 };
-
-/** Speech backend actually used by the TTS worker. */
-enum class TtsBackend { Piper, Espeak, Local, Supertonic };
-
-/**
- * Chooses the backend from the persisted engine choice and model availability.
- *
- * An explicit "espeak" selection always wins.  "piper" and "supertonic" only
- * select their engine when the model is present; otherwise the plugin keeps
- * speaking through espeak-ng instead of going silent.  Runtime/config checks
- * stay in PluginContext, which can also fall back for a missing libpiper,
- * ONNX Runtime, or helper resource.
- */
-TtsBackend chooseTtsBackend(const Settings &settings, bool piperModelPresent,
-                            bool supertonicModelPresent);

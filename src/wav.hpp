@@ -11,7 +11,7 @@
  * Only 16-bit PCM at 22,050 Hz mono is accepted.  Chunk walking tolerates
  * odd-sized chunks and unknown chunks.  A data chunk whose declared size is
  * zero, 0xFFFFFFFF, or larger than the remaining bytes is treated as
- * "read the rest", which is what espeak-ng --stdout emits.
+ * "read the rest", which is what the old espeak-ng --stdout path emitted.
  */
 bool parseWav(const QByteArray &bytes, std::vector<float> *pcm, int *sampleRate,
               QString *error);

@@ -58,8 +58,8 @@ QString uiTextf(const char *key, const char *fallback, const QString &value)
 }
 
 /* QFormLayout keeps the label widget alive when its field is hidden, so hide
- * both halves of a row.  Without this, switching to Piper leaves "Rate" and
- * "Pitch" labels floating above nothing. */
+ * both halves of a row.  Without this, switching to the local server leaves
+ * Supertonic labels floating above nothing. */
 void setFormRowVisible(QFormLayout *form, QWidget *field, bool visible)
 {
     if (!form || !field)
@@ -121,7 +121,7 @@ YtChatTtsDock::YtChatTtsDock(PluginContext *context, QWidget *parent)
     refreshTimer_->start();
 
     /* Slider drags emit many values; coalesce engine restarts instead of
-     * stopping/starting espeak-ng on every tick. */
+     * reloading the Supertonic worker on every tick. */
     liveApplyTimer_->setSingleShot(true);
     liveApplyTimer_->setInterval(kEngineApplyDebounceMs);
     connect(liveApplyTimer_, &QTimer::timeout, this, &YtChatTtsDock::applyLiveSettingsNow);
@@ -221,23 +221,12 @@ YtChatTtsDock::YtChatTtsDock(PluginContext *context, QWidget *parent)
     voiceForm_ = voiceForm;
 
     engineCombo_ = new QComboBox(voiceGroup);
-    engineCombo_->addItem(uiText("Voice.EnginePiper", "Piper — natural (CPU)"),
-                          QStringLiteral("piper"));
-    engineCombo_->addItem(
-        uiText("Voice.EngineSupertonic", "Supertonic — natural (CPU, experimental)"),
-        QStringLiteral("supertonic"));
-    engineCombo_->addItem(uiText("Voice.EngineEspeak", "espeak-ng — fast fallback"),
-                          QStringLiteral("espeak"));
+    engineCombo_->addItem(uiText("Voice.EngineSupertonic", "Supertonic — natural (CPU)"),
+                          QStringLiteral("supertonic"));
     engineCombo_->addItem(
         uiText("Voice.EngineLocal", "Local server — Kokoro / Pocket (experimental)"),
         QStringLiteral("local"));
     voiceForm->addRow(uiText("Voice.Engine", "Engine"), engineCombo_);
-
-    piperVoiceCombo_ = new QComboBox(voiceGroup);
-    piperVoiceCombo_->addItem(
-        uiText("Voice.PiperVoiceLjspeech", "LJSpeech — US female (medium)"),
-        QStringLiteral("en_US-ljspeech-medium"));
-    voiceForm->addRow(uiText("Voice.PiperVoice", "Piper voice"), piperVoiceCombo_);
 
     supertonicVoiceCombo_ = new QComboBox(voiceGroup);
     for (const char *voice : {"F1", "F2", "F3", "F4", "F5", "M1", "M2", "M3", "M4", "M5"})
@@ -247,52 +236,6 @@ YtChatTtsDock::YtChatTtsDock(PluginContext *context, QWidget *parent)
                "F1-F5 are female styles and M1-M5 are male styles."));
     voiceForm->addRow(uiText("Voice.SupertonicVoice", "Supertonic voice"),
                       supertonicVoiceCombo_);
-
-    streamCheck_ = new QCheckBox(
-        uiText("Voice.StreamAudio", "Low-latency streaming"), voiceGroup);
-    streamCheck_->setToolTip(uiText(
-        "Voice.StreamAudioTooltip",
-        "Send each synthesized chunk to OBS as it is produced instead of "
-        "waiting for the whole message. Starts speech sooner; the audio is "
-        "identical."));
-    voiceForm->addRow(streamCheck_);
-
-    localUrlEdit_ = new QLineEdit(voiceGroup);
-    localUrlEdit_->setPlaceholderText(QStringLiteral("http://127.0.0.1:8765"));
-    voiceForm->addRow(uiText("Voice.LocalUrl", "Server URL"), localUrlEdit_);
-
-    localVoiceEdit_ = new QLineEdit(voiceGroup);
-    localVoiceEdit_->setPlaceholderText(QStringLiteral("af_heart"));
-    voiceForm->addRow(uiText("Voice.LocalVoice", "Server voice"), localVoiceEdit_);
-
-    localModelEdit_ = new QLineEdit(voiceGroup);
-    localModelEdit_->setPlaceholderText(QStringLiteral("tts-1"));
-    voiceForm->addRow(uiText("Voice.LocalModel", "Server model"), localModelEdit_);
-
-    voiceCombo_ = new QComboBox(voiceGroup);
-    voiceCombo_->setEditable(true);
-    voiceCombo_->setInsertPolicy(QComboBox::NoInsert);
-    voiceCombo_->addItems({QStringLiteral("en-us"), QStringLiteral("en-gb"),
-                           QStringLiteral("en-in"), QStringLiteral("en-gb-scotland"),
-                           QStringLiteral("en-029")});
-    voiceCombo_->lineEdit()->setPlaceholderText(
-        uiText("Voice.VoicePlaceholder", "espeak-ng voice, e.g. en-us"));
-    voiceForm->addRow(uiText("Voice.EspeakVoice", "espeak-ng voice"), voiceCombo_);
-
-    rateSlider_ = new QSlider(Qt::Horizontal, voiceGroup);
-    rateSlider_->setRange(80, 450);
-    rateValueLabel_ = new QLabel(voiceGroup);
-    rateRow_ = addSliderRow(voiceForm, uiText("Voice.Rate", "Rate"), rateSlider_, rateValueLabel_);
-
-    piperSpeedSlider_ = new QSlider(Qt::Horizontal, voiceGroup);
-    piperSpeedSlider_->setRange(0, 300);
-    piperSpeedSlider_->setSingleStep(5);
-    piperSpeedSlider_->setToolTip(
-        uiText("Voice.SpeedTooltip",
-               "Lower values speak more slowly. 0.00 is the slowest and 3.00 is the fastest."));
-    speedValueLabel_ = new QLabel(voiceGroup);
-    speedRow_ = addSliderRow(voiceForm, uiText("Voice.Speed", "Speed"), piperSpeedSlider_,
-                             speedValueLabel_);
 
     supertonicSpeedSlider_ = new QSlider(Qt::Horizontal, voiceGroup);
     supertonicSpeedSlider_->setRange(90, 150);
@@ -315,21 +258,26 @@ YtChatTtsDock::YtChatTtsDock(PluginContext *context, QWidget *parent)
     voiceForm->addRow(uiText("Voice.SupertonicSteps", "Denoising steps"),
                       supertonicStepsSpin_);
 
-    advancedVoiceCheck_ =
-        new QCheckBox(uiText("Voice.ShowAdvanced", "Show advanced voice settings"), voiceGroup);
-    voiceForm->addRow(advancedVoiceCheck_);
+    streamCheck_ = new QCheckBox(
+        uiText("Voice.StreamAudio", "Low-latency streaming"), voiceGroup);
+    streamCheck_->setToolTip(uiText(
+        "Voice.StreamAudioTooltip",
+        "Send each synthesized sentence to OBS as it is produced instead of "
+        "waiting for the whole message. Starts speech sooner; the audio is "
+        "identical."));
+    voiceForm->addRow(streamCheck_);
 
-    pitchSlider_ = new QSlider(Qt::Horizontal, voiceGroup);
-    pitchSlider_->setRange(0, 200);
-    pitchValueLabel_ = new QLabel(voiceGroup);
-    pitchRow_ = addSliderRow(voiceForm, uiText("Voice.Pitch", "Pitch"), pitchSlider_,
-                             pitchValueLabel_);
+    localUrlEdit_ = new QLineEdit(voiceGroup);
+    localUrlEdit_->setPlaceholderText(QStringLiteral("http://127.0.0.1:8765"));
+    voiceForm->addRow(uiText("Voice.LocalUrl", "Server URL"), localUrlEdit_);
 
-    amplitudeSlider_ = new QSlider(Qt::Horizontal, voiceGroup);
-    amplitudeSlider_->setRange(0, 200);
-    amplitudeValueLabel_ = new QLabel(voiceGroup);
-    amplitudeRow_ = addSliderRow(voiceForm, uiText("Voice.Amplitude", "Amplitude"),
-                                 amplitudeSlider_, amplitudeValueLabel_);
+    localVoiceEdit_ = new QLineEdit(voiceGroup);
+    localVoiceEdit_->setPlaceholderText(QStringLiteral("af_heart"));
+    voiceForm->addRow(uiText("Voice.LocalVoice", "Server voice"), localVoiceEdit_);
+
+    localModelEdit_ = new QLineEdit(voiceGroup);
+    localModelEdit_->setPlaceholderText(QStringLiteral("tts-1"));
+    voiceForm->addRow(uiText("Voice.LocalModel", "Server model"), localModelEdit_);
 
     volumeSlider_ = new QSlider(Qt::Horizontal, voiceGroup);
     /* Volume is 0.00-1.50 in the settings; the slider works in hundredths. */
@@ -558,27 +506,15 @@ YtChatTtsDock::YtChatTtsDock(PluginContext *context, QWidget *parent)
             &YtChatTtsDock::onControlChanged);
     connect(engineCombo_, &QComboBox::currentIndexChanged, this,
             &YtChatTtsDock::onControlChanged);
-    connect(piperVoiceCombo_, &QComboBox::currentIndexChanged, this,
-            &YtChatTtsDock::onControlChanged);
     connect(supertonicVoiceCombo_, &QComboBox::currentIndexChanged, this,
             &YtChatTtsDock::onControlChanged);
     connect(streamCheck_, &QCheckBox::toggled, this, &YtChatTtsDock::onControlChanged);
     connect(localUrlEdit_, &QLineEdit::textChanged, this, &YtChatTtsDock::onControlChanged);
     connect(localVoiceEdit_, &QLineEdit::textChanged, this, &YtChatTtsDock::onControlChanged);
     connect(localModelEdit_, &QLineEdit::textChanged, this, &YtChatTtsDock::onControlChanged);
-    connect(voiceCombo_, &QComboBox::currentTextChanged, this,
-            &YtChatTtsDock::onControlChanged);
-    connect(rateSlider_, &QSlider::valueChanged, this, &YtChatTtsDock::onControlChanged);
-    connect(piperSpeedSlider_, &QSlider::valueChanged, this,
-            &YtChatTtsDock::onControlChanged);
     connect(supertonicSpeedSlider_, &QSlider::valueChanged, this,
             &YtChatTtsDock::onControlChanged);
     connect(supertonicStepsSpin_, &QSpinBox::valueChanged, this,
-            &YtChatTtsDock::onControlChanged);
-    connect(advancedVoiceCheck_, &QCheckBox::toggled, this,
-            &YtChatTtsDock::updateEngineControls);
-    connect(pitchSlider_, &QSlider::valueChanged, this, &YtChatTtsDock::onControlChanged);
-    connect(amplitudeSlider_, &QSlider::valueChanged, this,
             &YtChatTtsDock::onControlChanged);
     connect(volumeSlider_, &QSlider::valueChanged, this, &YtChatTtsDock::onControlChanged);
     connect(readAuthorCheck_, &QCheckBox::toggled, this, &YtChatTtsDock::onControlChanged);
@@ -643,15 +579,6 @@ void YtChatTtsDock::applySettingsToControls()
     const int engineIndex = engineCombo_->findData(settings.ttsEngine);
     engineCombo_->setCurrentIndex(engineIndex < 0 ? 0 : engineIndex);
 
-    int piperVoiceIndex = piperVoiceCombo_->findData(settings.piperVoice);
-    if (piperVoiceIndex < 0) {
-        /* Keep a hand-edited voice id selectable instead of silently
-         * replacing it with the bundled default. */
-        piperVoiceCombo_->addItem(settings.piperVoice, settings.piperVoice);
-        piperVoiceIndex = piperVoiceCombo_->count() - 1;
-    }
-    piperVoiceCombo_->setCurrentIndex(piperVoiceIndex);
-
     const int supertonicVoiceIndex = supertonicVoiceCombo_->findData(settings.supertonicVoice);
     supertonicVoiceCombo_->setCurrentIndex(supertonicVoiceIndex < 0 ? 0 : supertonicVoiceIndex);
 
@@ -660,13 +587,8 @@ void YtChatTtsDock::applySettingsToControls()
     localVoiceEdit_->setText(settings.localTtsVoice);
     localModelEdit_->setText(settings.localTtsModel);
 
-    voiceCombo_->setCurrentText(settings.voice);
-    rateSlider_->setValue(settings.rate);
-    piperSpeedSlider_->setValue(qRound(settings.piperSpeed * 100.0));
     supertonicSpeedSlider_->setValue(qRound(settings.supertonicSpeed * 100.0));
     supertonicStepsSpin_->setValue(settings.supertonicSteps);
-    pitchSlider_->setValue(settings.pitch);
-    amplitudeSlider_->setValue(settings.amplitude);
     volumeSlider_->setValue(qRound(settings.volume * 100.0));
     readAuthorCheck_->setChecked(settings.readAuthor);
     authorTemplateEdit_->setText(settings.authorTemplate);
@@ -690,33 +612,23 @@ void YtChatTtsDock::applySettingsToControls()
 
 Settings YtChatTtsDock::settingsFromControls() const
 {
-    /* Preserve fields without a control (explicit helper/espeak paths). */
+    /* Preserve fields without a control (helper path and future settings). */
     Settings settings = context_ ? context_->settings() : Settings{};
     settings.provider = providerCombo_->currentData().toString();
     settings.apiKey = apiKeyEdit_->text();
     settings.videoUrl = urlEdit_->text().trimmed();
-    settings.voice = voiceCombo_->currentText().trimmed();
     const QString engine = engineCombo_->currentData().toString();
-    settings.ttsEngine = engine == QLatin1String("espeak") || engine == QLatin1String("local") ||
-                                 engine == QLatin1String("supertonic")
-                             ? engine
-                             : QStringLiteral("piper");
+    settings.ttsEngine =
+        engine == QLatin1String("local") ? QStringLiteral("local") : QStringLiteral("supertonic");
     settings.streamAudio = streamCheck_->isChecked();
     settings.localTtsUrl = localUrlEdit_->text().trimmed();
     settings.localTtsVoice = localVoiceEdit_->text().trimmed();
     settings.localTtsModel = localModelEdit_->text().trimmed();
-    settings.piperVoice = piperVoiceCombo_->currentData().toString().trimmed();
-    if (settings.piperVoice.isEmpty())
-        settings.piperVoice = QStringLiteral("en_US-ljspeech-medium");
     settings.supertonicVoice = supertonicVoiceCombo_->currentData().toString().trimmed();
     if (settings.supertonicVoice.isEmpty())
         settings.supertonicVoice = QStringLiteral("F1");
-    settings.rate = rateSlider_->value();
-    settings.piperSpeed = piperSpeedSlider_->value() / 100.0;
     settings.supertonicSpeed = supertonicSpeedSlider_->value() / 100.0;
     settings.supertonicSteps = supertonicStepsSpin_->value();
-    settings.pitch = pitchSlider_->value();
-    settings.amplitude = amplitudeSlider_->value();
     settings.volume = volumeSlider_->value() / 100.0;
     settings.readAuthor = readAuthorCheck_->isChecked();
     settings.authorTemplate = authorTemplateEdit_->text();
@@ -761,16 +673,12 @@ void YtChatTtsDock::onControlChanged()
     updateValueLabels();
 
     QObject *changed = sender();
-    const bool engineSelection = changed == engineCombo_ || changed == piperVoiceCombo_ ||
+    const bool engineSelection = changed == engineCombo_ ||
                                  changed == supertonicVoiceCombo_ ||
                                  changed == localUrlEdit_ || changed == localVoiceEdit_ ||
                                  changed == localModelEdit_;
-    const bool engineControl = changed == voiceCombo_ || changed == rateSlider_ ||
-                               changed == piperSpeedSlider_ ||
-                               changed == supertonicSpeedSlider_ ||
-                               changed == supertonicStepsSpin_ ||
-                               changed == pitchSlider_ || changed == amplitudeSlider_ ||
-                               engineSelection;
+    const bool engineControl = changed == supertonicSpeedSlider_ ||
+                               changed == supertonicStepsSpin_ || engineSelection;
     if (engineSelection) {
         /* Coalesce with slider drags: one apply after the user settles on an
          * engine/voice.  PluginContext owns the restart decision. */
@@ -795,10 +703,9 @@ void YtChatTtsDock::applyLiveSettingsNow()
 
     context_->settings() = settingsFromControls();
 
-    /* PluginContext detects engine/voice/rate changes from the settings it was
+    /* PluginContext detects engine/voice/step changes from the settings it was
      * given and restarts the worker itself.  It is also the only place that
-     * logs the active engine, so a missing Piper model is reported as the
-     * espeak fallback rather than a false "Piper active" claim. */
+     * logs the active engine and reports a missing Supertonic model. */
     context_->applyLiveSettings();
 }
 
@@ -939,15 +846,9 @@ void YtChatTtsDock::updateSourceStatus()
 
 void YtChatTtsDock::updateValueLabels()
 {
-    rateValueLabel_->setText(
-        uiTextf("Voice.RateValue", "%1 wpm", QString::number(rateSlider_->value())));
-    speedValueLabel_->setText(uiTextf("Voice.SpeedValue", "%1×",
-                                      QString::number(piperSpeedSlider_->value() / 100.0, 'f', 2)));
     supertonicSpeedValueLabel_->setText(
         uiTextf("Voice.SpeedValue", "%1×",
                 QString::number(supertonicSpeedSlider_->value() / 100.0, 'f', 2)));
-    pitchValueLabel_->setText(QString::number(pitchSlider_->value()));
-    amplitudeValueLabel_->setText(QString::number(amplitudeSlider_->value()));
     volumeValueLabel_->setText(
         QString::number(volumeSlider_->value() / 100.0, 'f', 2));
 }
@@ -955,64 +856,30 @@ void YtChatTtsDock::updateValueLabels()
 void YtChatTtsDock::updateEngineControls()
 {
     const QString engine = engineCombo_->currentData().toString();
-    const bool piper = engine == QLatin1String("piper");
     const bool supertonic = engine == QLatin1String("supertonic");
-    const bool espeak = engine == QLatin1String("espeak");
     const bool local = engine == QLatin1String("local");
 
-    /* Each engine keeps its own controls so switching back and forth never
-     * overwrites the other engine's saved choice. */
-    piperVoiceCombo_->setEnabled(piper);
     supertonicVoiceCombo_->setEnabled(supertonic);
     supertonicStepsSpin_->setEnabled(supertonic);
-    voiceCombo_->setEnabled(espeak);
-    setFormRowVisible(voiceForm_, piperVoiceCombo_, piper);
     setFormRowVisible(voiceForm_, supertonicVoiceCombo_, supertonic);
     setFormRowVisible(voiceForm_, supertonicStepsSpin_, supertonic);
-    setFormRowVisible(voiceForm_, voiceCombo_, espeak);
-
-    setFormRowVisible(voiceForm_, rateRow_, espeak);
-    setFormRowVisible(voiceForm_, speedRow_, piper);
     setFormRowVisible(voiceForm_, supertonicSpeedRow_, supertonic);
 
-    /* Piper and Supertonic fix pitch/amplitude in the model; the local server
-     * has its own voice controls. */
-    const QString tooltip =
-        piper
-            ? uiText("Voice.PiperFixedTooltip",
-                     "Pitch and amplitude are fixed for Piper voices.")
-            : supertonic
-                  ? uiText("Voice.SupertonicFixedTooltip",
-                           "Pitch and amplitude are fixed for Supertonic voices.")
-                  : local ? uiText("Voice.LocalFixedTooltip",
-                                   "Pitch and amplitude are controlled by the local server.")
-                          : QString();
-    pitchSlider_->setEnabled(espeak);
-    amplitudeSlider_->setEnabled(espeak);
-    pitchSlider_->setToolTip(tooltip);
-    amplitudeSlider_->setToolTip(tooltip);
-    streamCheck_->setEnabled(piper || supertonic);
-
-    const bool showAdvanced = advancedVoiceCheck_ && advancedVoiceCheck_->isChecked();
-    if (advancedVoiceCheck_)
-        advancedVoiceCheck_->setVisible(espeak);
-    setFormRowVisible(voiceForm_, pitchRow_, espeak && showAdvanced);
-    setFormRowVisible(voiceForm_, amplitudeRow_, espeak && showAdvanced);
     setFormRowVisible(voiceForm_, localUrlEdit_, local);
     setFormRowVisible(voiceForm_, localVoiceEdit_, local);
     setFormRowVisible(voiceForm_, localModelEdit_, local);
+
+    /* Streaming is a Supertonic feature; the local server controls its own
+     * chunking. */
+    streamCheck_->setEnabled(supertonic);
     updateValueLabels();
 }
 
 void YtChatTtsDock::onResetVoiceClicked()
 {
-    rateSlider_->setValue(165);
-    piperSpeedSlider_->setValue(100);
     supertonicSpeedSlider_->setValue(100);
     supertonicStepsSpin_->setValue(8);
     supertonicVoiceCombo_->setCurrentIndex(0);
-    pitchSlider_->setValue(50);
-    amplitudeSlider_->setValue(150);
     volumeSlider_->setValue(100);
     updateValueLabels();
     applyLiveSettingsNow();

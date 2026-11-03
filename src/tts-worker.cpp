@@ -72,8 +72,8 @@ void TtsWorker::stop()
 {
     running_.store(false);
 
-    /* cancel() is asynchronous by contract (an atomic flag in EspeakEngine),
-     * so it is safe to call from the UI thread while synthesize() runs. */
+    /* cancel() is asynchronous by contract (the engine only sets an atomic
+     * flag), so it is safe to call from the UI thread while synthesize() runs. */
     if (engine_)
         engine_->cancel();
 
@@ -184,10 +184,10 @@ void TtsWorker::run()
             break;
 
         if (!synthesized) {
-            /* A permanent initialization failure (for example a corrupt Piper
-             * model) will never produce audio on this engine.  Hand the current
-             * message to the replacement engine and stop this run loop instead
-             * of retrying the dead engine on every utterance. */
+            /* A permanent initialization failure (for example a corrupt Supertonic
+             * model) will never produce audio on this engine.  Requeue the current
+             * message and stop this run loop instead of retrying the dead
+             * engine on every utterance. */
             if (engine_->initializationFailed()) {
                 queue_.push(msg, 0);
                 const QString reason =

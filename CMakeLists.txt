@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(obs-yt-chat-tts VERSION 0.2.0 LANGUAGES CXX)
+project(obs-yt-chat-tts VERSION 0.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -10,27 +10,16 @@ find_package(libobs REQUIRED CONFIG)
 find_package(obs-frontend-api REQUIRED CONFIG)
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network)
 
-# Native Piper runtime.  Host builds and host tests deliberately do not need
-# libpiper or ONNX Runtime: the real backend is only compiled into the plugin
-# when PIPER_ROOT (or the normal system paths) provides piper.h and both
-# libraries.  The Flatpak build passes -DPIPER_ROOT=/app/plugins/YtChatTts.
-set(PIPER_ROOT "" CACHE PATH "Prefix containing libpiper and ONNX Runtime")
+# Supertonic is the only bundled neural engine.  Host builds and host tests
+# do not need ONNX Runtime: the real backend is compiled only when
+# ONNXRUNTIME_ROOT (or the system paths) provides the headers and library.
+# The Flatpak build passes -DONNXRUNTIME_ROOT=/app/plugins/YtChatTts.
 set(ONNXRUNTIME_ROOT "" CACHE PATH "Prefix containing ONNX Runtime headers and library")
 
-find_path(PIPER_INCLUDE_DIR NAMES piper.h HINTS "${PIPER_ROOT}/include")
-find_library(PIPER_LIBRARY NAMES piper HINTS "${PIPER_ROOT}/lib")
 find_path(ONNXRUNTIME_INCLUDE_DIR NAMES onnxruntime_cxx_api.h
-    HINTS "${ONNXRUNTIME_ROOT}/include" "${PIPER_ROOT}/include")
+    HINTS "${ONNXRUNTIME_ROOT}/include")
 find_library(ONNXRUNTIME_LIBRARY NAMES onnxruntime
-    HINTS "${ONNXRUNTIME_ROOT}/lib" "${PIPER_ROOT}/lib")
-
-if(PIPER_INCLUDE_DIR AND PIPER_LIBRARY AND ONNXRUNTIME_LIBRARY)
-    set(YTCHAT_PIPER_AVAILABLE ON)
-    message(STATUS "Piper backend: ${PIPER_LIBRARY} (headers: ${PIPER_INCLUDE_DIR})")
-else()
-    set(YTCHAT_PIPER_AVAILABLE OFF)
-    message(STATUS "Piper backend: not found; building without libpiper")
-endif()
+    HINTS "${ONNXRUNTIME_ROOT}/lib")
 
 if(ONNXRUNTIME_INCLUDE_DIR AND ONNXRUNTIME_LIBRARY)
     set(YTCHAT_SUPERTONIC_AVAILABLE ON)
@@ -50,7 +39,6 @@ add_library(yt-chat-tts MODULE
     src/message-filter.cpp
     src/tts-queue.cpp
     src/wav.cpp
-    src/espeak-engine.cpp
     src/speech-conditioner.cpp
     src/speech-conditioner.hpp
     src/audio-resampler.cpp
@@ -81,30 +69,7 @@ target_link_libraries(yt-chat-tts PRIVATE
     Qt6::Network
 )
 
-# Product code defines HAVE_LIBPIPER=1 when the bundled runtime is linked so
-# the engine wiring can choose Piper; host builds compile without it.
-if(YTCHAT_PIPER_AVAILABLE)
-    target_sources(yt-chat-tts PRIVATE
-        src/piper-engine.cpp
-        src/piper-engine.hpp
-        src/libpiper-api.cpp
-        src/libpiper-api.hpp
-    )
-    target_include_directories(yt-chat-tts PRIVATE "${PIPER_INCLUDE_DIR}")
-    target_compile_definitions(yt-chat-tts PRIVATE HAVE_LIBPIPER=1)
-    target_link_libraries(yt-chat-tts PRIVATE
-        "${PIPER_LIBRARY}"
-        "${ONNXRUNTIME_LIBRARY}"
-    )
-
-    # yt-chat-tts.so is installed in <prefix>/lib/obs-plugins, while libpiper
-    # and libonnxruntime are installed in <prefix>/lib.
-    set_target_properties(yt-chat-tts PROPERTIES INSTALL_RPATH "$ORIGIN/..")
-endif()
-
-# The Supertonic engine is independent of libpiper: it needs only ONNX Runtime
-# and the bundled model, so a host build with ONNXRUNTIME_ROOT can exercise it
-# even when Piper is absent.
+# The Supertonic engine needs ONNX Runtime and the bundled model.
 if(YTCHAT_SUPERTONIC_AVAILABLE)
     target_sources(yt-chat-tts PRIVATE
         src/supertonic-text.cpp
@@ -158,50 +123,6 @@ install(DIRECTORY LICENSES/
     DESTINATION ${YTCHAT_LICENSE_DIR}/LICENSES
 )
 
-# Packaging probe for the Flatpak build.  It is off by default so host builds
-# and host tests do not need libpiper or ONNX Runtime.  The Flatpak manifest
-# enables it once the bundled libraries and voice model have been installed.
-# Besides the raw C API path, the probe can exercise the real LibPiperApi via
-# PiperEngine so the shipped backend is verified, not just libpiper itself.
-option(BUILD_PIPER_PROBE "Build the Flatpak Piper probe" OFF)
-
-if(BUILD_PIPER_PROBE)
-    if(NOT YTCHAT_PIPER_AVAILABLE)
-        message(FATAL_ERROR
-            "BUILD_PIPER_PROBE requires libpiper and ONNX Runtime; "
-            "set -DPIPER_ROOT=<prefix>")
-    endif()
-
-    add_executable(piper_probe
-        tools/piper_probe.cpp
-        src/libpiper-api.cpp
-        src/piper-engine.cpp
-    )
-    set_target_properties(piper_probe PROPERTIES
-        OUTPUT_NAME piper-probe
-        # Installed next to the other extension binaries:
-        #   <prefix>/share/obs/obs-plugins/yt-chat-tts/bin/piper-probe
-        # Libraries live in <prefix>/lib, five directories up:
-        #   bin -> yt-chat-tts -> obs-plugins -> obs -> share -> <prefix>
-        INSTALL_RPATH "$ORIGIN/../../../../../lib"
-        BUILD_RPATH "${PIPER_ROOT}/lib"
-    )
-    target_include_directories(piper_probe PRIVATE
-        src
-        "${PIPER_INCLUDE_DIR}"
-    )
-    target_compile_definitions(piper_probe PRIVATE HAVE_LIBPIPER=1)
-    target_link_libraries(piper_probe PRIVATE
-        Qt6::Core
-        "${PIPER_LIBRARY}"
-        "${ONNXRUNTIME_LIBRARY}"
-    )
-
-    install(TARGETS piper_probe
-        RUNTIME DESTINATION share/obs/obs-plugins/yt-chat-tts/bin
-    )
-endif()
-
 # Packaging probe for the bundled Supertonic 3 model.  It exercises the same
 # LibSupertonicApi/SupertonicEngine path the plugin uses, including the
 # 44,100 -> 22,050 Hz conversion, so a packaging regression is visible without
@@ -226,7 +147,8 @@ if(BUILD_SUPERTONIC_PROBE)
     )
     set_target_properties(supertonic_probe PROPERTIES
         OUTPUT_NAME supertonic-probe
-        # Same install location and relative library directory as piper-probe.
+        # Installed next to the other extension binaries; libraries live five
+        # directories up in <prefix>/lib.
         INSTALL_RPATH "$ORIGIN/../../../../../lib"
         BUILD_RPATH "${ONNXRUNTIME_LIBRARY_DIR}"
     )
@@ -280,21 +202,6 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME test_settings COMMAND test_settings)
-
-    add_executable(test_tts_backend
-        tests/test_tts_backend.cpp
-        src/settings.cpp
-        src/paths.cpp
-    )
-
-    target_include_directories(test_tts_backend PRIVATE src)
-    target_link_libraries(test_tts_backend PRIVATE
-        OBS::libobs
-        Qt6::Core
-        Qt6::Test
-    )
-
-    add_test(NAME test_tts_backend COMMAND test_tts_backend)
 
     add_executable(test_text_normalizer
         tests/test_text_normalizer.cpp
@@ -353,23 +260,6 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME test_wav COMMAND test_wav)
-
-    add_executable(test_espeak_engine
-        tests/test_espeak_engine.cpp
-        src/espeak-engine.cpp
-        src/wav.cpp
-    )
-
-    target_include_directories(test_espeak_engine PRIVATE src)
-    target_compile_definitions(test_espeak_engine PRIVATE
-        TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
-    )
-    target_link_libraries(test_espeak_engine PRIVATE
-        Qt6::Core
-        Qt6::Test
-    )
-
-    add_test(NAME test_espeak_engine COMMAND test_espeak_engine)
 
     add_executable(test_audio_buffer
         tests/test_audio_buffer.cpp
@@ -441,22 +331,6 @@ if(BUILD_TESTING)
 
     add_test(NAME test_tts_worker COMMAND test_tts_worker)
     set_tests_properties(test_tts_worker PROPERTIES TIMEOUT 30)
-
-    # Engine-level Piper coverage through the injectable PiperApi.  The real
-    # libpiper/ONNX backend is added to the plugin target in a later task, so
-    # this host test has no native runtime dependency.
-    add_executable(test_piper_engine
-        tests/test_piper_engine.cpp
-        src/piper-engine.cpp
-    )
-
-    target_include_directories(test_piper_engine PRIVATE src)
-    target_link_libraries(test_piper_engine PRIVATE
-        Qt6::Core
-        Qt6::Test
-    )
-
-    add_test(NAME test_piper_engine COMMAND test_piper_engine)
 
     # Pure text preprocessing for the Supertonic engine: no ONNX Runtime.
     add_executable(test_supertonic_text

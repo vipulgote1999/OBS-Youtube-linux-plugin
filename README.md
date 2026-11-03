@@ -1,12 +1,9 @@
 # OBS YouTube Chat TTS
 
-A Flatpak extension for OBS Studio that reads YouTube live chat aloud with
-bundled offline neural voices — [Piper](https://github.com/OHF-Voice/piper1-gpl)
-or [Supertonic 3](https://huggingface.co/supertone-oss-archive/supertonic-3)
-(CPU-only) — and mixes the synthesized speech into OBS as a native audio
-source. The bundled [espeak-ng](https://github.com/espeak-ng/espeak-ng) engine
-remains available and is the automatic fallback. There is no cloud TTS, no
-virtual audio cable and no Python inside OBS.
+A Flatpak extension for OBS Studio that reads YouTube live chat aloud with the
+bundled offline neural [Supertonic 3](https://huggingface.co/supertone-oss-archive/supertonic-3)
+engine (CPU-only) and mixes the synthesized speech into OBS as a native audio
+source. There is no cloud TTS, no virtual audio cable and no Python inside OBS.
 
 The extension is a C++17/Qt 6 OBS module built inside the
 `org.freedesktop.Sdk//25.08` sandbox and installed as
@@ -25,25 +22,16 @@ the experimental keyless InnerTube provider.
 - **Auto mode**: official first when a key is configured, with a visible
   warning and fallback to InnerTube on a pre-connection auth, quota or network
   failure.
-- **Offline neural speech** through a bundled Piper `libpiper` + ONNX Runtime
-  runtime and the public-domain `en_US-ljspeech-medium` voice. Synthesis is
-  CPU-only and the model is loaded once per worker, not per message.
-- **Supertonic 3** through the same ONNX Runtime, with ten bundled voice styles
-  and a 4–16 step denoising control. It is a larger (≈380 MB) experimental
-  engine, selected from the same dock.
-- **Engine selector**: `Piper — natural (CPU)` (default),
-  `Supertonic — natural (CPU, experimental)`, `espeak-ng — fast fallback`, or
-  `Local server — Kokoro / Pocket (experimental)`; the audio is fed to a native
-  OBS input source named `YouTube Chat TTS`.
-- **Low-latency streaming** for Piper and Supertonic: each sentence is pushed
-  to OBS as it is synthesized instead of after the whole message. Toggle it off
-  in the dock.
+- **Offline neural speech** through the bundled Supertonic 3 model and ONNX
+  Runtime. Synthesis is CPU-only and the model is loaded once per worker, not
+  per message.
+- **Ten bundled voices** (`F1`–`F5`, `M1`–`M5`), adjustable speed
+  (0.90–1.50×) and denoising steps (4–16).
 - **Local high-quality engines**: point the plugin at an OpenAI-compatible TTS
-  server you run (Kokoro, Pocket TTS, ...) to get a noticeably better voice
-  without bundling a second model.
-- **espeak-ng fallback** through the bundled 1.51 executable whenever the Piper
-  model/config/espeak data is missing or corrupt, or Piper initialization
-  fails after the plugin has loaded. The dock logs the reason.
+  server you run (Kokoro, Pocket TTS, ...) to use a different voice without
+  bundling another model.
+- **Low-latency streaming**: each sentence is pushed to OBS as it is
+  synthesized instead of after the whole message. Toggle it off in the dock.
 - **Filtering**: max length, per-user and global cooldowns, command prefix,
   URL stripping, blocklisted phrases, Super Chats, new members, moderators.
 - **Bounded queue** (default 25, configurable 1–100) with Skip Current and
@@ -76,13 +64,10 @@ the experimental keyless InnerTube provider.
 The first SDK install is a large one-time download. The SDK is not vendored in
 this repository.
 
-The neural engines need no GPU or CUDA and no runtime network access, but they
-make the extension much larger: the LJSpeech model is about 63 MB, the
+The bundled engine needs no GPU or CUDA and no runtime network access. The
 Supertonic 3 model and ten voices are about 381 MB, ONNX Runtime adds about
-21 MB of shared libraries, and the installed extension is roughly 500–550 MB
-instead of the espeak-only size. Those files are bundled so the extension stays
-offline and self-contained. Remove the Supertonic module from the Flatpak
-manifest if you only need Piper.
+21 MB of shared libraries, and the installed extension is roughly 440–470 MB.
+Those files are bundled so the extension stays offline and self-contained.
 
 ## Quick install (prebuilt Flatpak bundle)
 
@@ -120,8 +105,6 @@ SHA-256 for the bundle:
 ./scripts/build-helper.sh      # produces dist/ytchat-helper (static x86-64)
 ./scripts/build-flatpak.sh     # reruns build-helper.sh, then installs the extension
 ./scripts/smoke-flatpak.sh     # checks the installed extension inside the sandbox
-./scripts/test-espeak-flatpak.sh
-./scripts/test-piper-flatpak.sh # Piper synthesis, 200-character latency, fallback probes
 ./scripts/test-supertonic-flatpak.sh # Supertonic synthesis, benchmark, cancellation
 ```
 
@@ -137,26 +120,18 @@ rm -rf build build-flatpak dist
 ./scripts/build-helper.sh
 ./scripts/build-flatpak.sh
 ./scripts/smoke-flatpak.sh
-./scripts/test-espeak-flatpak.sh
-./scripts/test-piper-flatpak.sh
 ./scripts/test-supertonic-flatpak.sh
 ./scripts/test-host.sh
 ```
 
 `smoke-flatpak.sh` verifies, inside the OBS sandbox, that the module and
-locale, the executable helper (`ytchat-helper --version`), the espeak-ng
-binary and data, libpiper/ONNX Runtime, the LJSpeech model and config, the
-Supertonic 3 model with all ten voice styles, the AppStream metainfo and the
-license/notice files are all present, that the module actually links the
-bundled Piper/ONNX runtime, and that no installed binary has a missing shared
-library. `test-espeak-flatpak.sh` synthesizes speech to a WAV and checks its
-RIFF header. `test-piper-flatpak.sh` synthesizes through the raw C API and the
-shipped engine, runs a deterministic 200-character phrase three times, reports
-first and steady-state timings (the best steady-state run must be under 1.5 s
-on the reference CPU), and checks the cancellation and missing-config error
-paths. `test-supertonic-flatpak.sh` synthesizes through `SupertonicEngine`,
-runs the same 200-character phrase at four denoising steps, and checks the
-cancellation and missing-model error paths.
+locale, the executable helper (`ytchat-helper --version`), the Supertonic 3
+model with all ten voice styles, ONNX Runtime, the packaging probe, the
+AppStream metainfo and the license/notice files are all present, that the
+module actually links the bundled ONNX Runtime, and that no installed binary
+has a missing shared library. `test-supertonic-flatpak.sh` synthesizes through
+`SupertonicEngine`, runs a deterministic 200-character phrase at four
+denoising steps, and checks the cancellation and missing-model error paths.
 
 After installing or rebuilding the extension, **restart OBS** (or use
 *File → Exit* and start it again): a running instance keeps the extension it
@@ -236,21 +211,19 @@ queued messages (the sentence already playing may finish); **Clear Queue**
 empties the queue. **Clear Log** clears the dock's log pane only; the OBS log
 file is unaffected.
 
-### Speech engines, voice and rate
+### Speech engine, voice and speed
 
-The **Engine** selector has four entries:
+The **Engine** selector has two entries:
 
 | Engine | Voice | Notes |
 | --- | --- | --- |
-| `Piper — natural (CPU)` (default) | `LJSpeech — US female (medium)` | Bundled `en_US-ljspeech-medium` model, 22,050 Hz mono float, public-domain LJ Speech dataset. CPU-only; the model is loaded once per worker. |
-| `Supertonic — natural (CPU, experimental)` | Ten built-in styles: `F1`–`F5`, `M1`–`M5` | Bundled Supertonic 3 model, ~380 MB, 44,100 Hz output resampled to 22,050 Hz. Denoising steps are adjustable (4–16; 8 is the default). |
-| `espeak-ng — fast fallback` | Existing espeak-ng English voices | Small and fast; robotic formant synthesis. |
-| `Local server — Kokoro / Pocket (experimental)` | Whatever the server offers | Talks to a local OpenAI-compatible `/v1/audio/speech` endpoint. The best quality option; the model runs outside the plugin. |
+| `Supertonic — natural (CPU)` (default) | Ten built-in styles: `F1`–`F5`, `M1`–`M5` | Bundled Supertonic 3 model, ~380 MB, 44,100 Hz output resampled to 22,050 Hz. Speed (0.90–1.50×) and denoising steps (4–16; 8 is the default) are adjustable. |
+| `Local server — Kokoro / Pocket (experimental)` | Whatever the server offers | Talks to a local OpenAI-compatible `/v1/audio/speech` endpoint. The model runs outside the plugin. |
 
-Only the LJSpeech Piper voice is bundled. The commonly suggested
-`en_US-lessac-medium` voice is **not** included because its Lessac/Blizzard
-dataset license is research-only and cannot be redistributed in a public
-release. `en_US-ryan-high` is CC BY-NC-SA and is also excluded.
+Supertonic is the only bundled engine. If its model or ONNX Runtime is
+missing or corrupt, the plugin logs the exact reason and stops; there is no
+espeak-ng fallback any more. Reinstall the extension or fix the model path,
+then click **Test Voice** or reconnect.
 
 ### Supertonic 3 performance
 
@@ -264,20 +237,16 @@ intra-op threads, 4 or 8 denoising steps, `F1` voice):
 | 200-character message | 1.92 s | 3.30 s |
 | Peak RSS | 656 MB | 657 MB |
 
-A warm short message also carries ~0.4 s of leading and ~0.6 s of trailing
-silence, so rapid one-word chat has a higher perceived latency than Piper.
-Long messages are faster in wall time than the shipped Piper voice because
-Supertonic generates 14.4 s of audio for the 200-character phrase where Piper
-generates 31.7 s. Number/currency symbols and CJK text are unreliable without
-a language/number normalizer, so Supertonic remains experimental and Piper
-stays the default. Full numbers, the ASR spot-check and the blind listening
-page are in
+A warm short message carries ~0.4 s of leading and ~0.6 s of trailing
+silence. Number/currency symbols and CJK text are unreliable without a
+language/number normalizer. Full numbers, the ASR spot-check and the blind
+listening page are in
 [`docs/supertonic-evaluation-2026-11-03.md`](docs/supertonic-evaluation-2026-11-03.md).
 
 ### Local server (Kokoro / Pocket TTS)
 
 The local engine is the quality path. Kokoro and Pocket TTS sound considerably
-better than the bundled Piper voice, but their weights are large and their
+better than the bundled Supertonic voice, but their weights are large and their
 licences differ, so the plugin does not ship them. Run one on the same machine:
 
 - **Kokoro** (Apache-2.0):
@@ -302,32 +271,26 @@ Flatpak.
 
 How the controls apply:
 
-- **Rate** is engine-specific. For Piper, the **Speed** slider multiplies the
-  model's `length_scale` (`1.00x` is the model's natural pace). The default is
-  `1.00x`; values below `1.00x` drag the voice and are the most common cause of
-  a "low quality" first impression. A saved `0.00` is migrated to `1.00` when
-  settings load, because `0.00` stretched the voice to one-third speed. The
-  default espeak **Rate** is 165. Supertonic has its own **Speed** slider
-  (0.90–1.50×) and a **Denoising steps** control (4–16; 8 is the default,
-  higher is slower and often cleaner). The 0.90–1.50 range is the model's
-  natural conversational range; lower values spend the extra duration on
-  silence rather than slower words.
-- **Pitch** and **Amplitude** are espeak-only. They are disabled (greyed) for
-  Piper, Supertonic and the local server with an explanatory tooltip.
-- **Low-latency streaming** applies to Piper and Supertonic. Each engine emits
-  one chunk per sentence, so multi-sentence messages start speaking sooner; a
+- **Speed** is Supertonic's playback multiplier. The UI range is 0.90–1.50×;
+  0.90× is the natural conversational pace and 1.50× is the fastest
+  recommended. Values below 0.90× spend the extra duration on long pauses
+  rather than slower words, so they are not exposed.
+- **Denoising steps** controls quality versus time: 8 is the default, 4 is
+  fastest, 16 is slowest and often cleanest.
+- **Low-latency streaming** applies to Supertonic. The engine emits one chunk
+  per sentence, so multi-sentence messages start speaking sooner; a
   one-sentence message is unchanged. The audio is identical and still
   DC-blocked and faded.
 - **Volume** applies to every engine and is owned by the audio buffer.
-- Changing **Engine** or **Voice** restarts the speech worker so the next
-  utterance uses the new selection; the chat connection is not dropped.
+- Changing **Engine** or a Supertonic parameter restarts the speech worker so
+  the next utterance uses the new selection; the chat connection is not
+  dropped.
 
-If the bundled Piper model, config or Piper espeak data is missing or corrupt,
-or Piper fails to initialize after the plugin has loaded, the dock logs the
-exact reason and speaks through espeak-ng instead. It never goes silent. A
-module that is missing libpiper/ONNX Runtime is a broken/incomplete package:
-`./scripts/smoke-flatpak.sh` fails rather than treating that as an espeak-only
-mode.
+If the bundled Supertonic model or ONNX Runtime is missing or corrupt, the
+dock logs the exact reason and the worker stops. There is no espeak-ng
+fallback any more: reinstall the extension or fix the model path, then click
+**Test Voice** or reconnect. `./scripts/smoke-flatpak.sh` fails on a package
+that does not link the bundled ONNX Runtime.
 
 ### Audio source and recording
 
@@ -408,8 +371,8 @@ owned/OAuth-authorized setup.
 - Chat messages are processed locally and spoken locally. This plugin does not
   send messages, moderate users, or authenticate as your YouTube account, and
   it does not upload chat content anywhere.
-- Both speech engines (Piper/ONNX Runtime and espeak-ng) run offline inside the
-  Flatpak sandbox. Piper adds no network calls and no telemetry.
+- Supertonic and ONNX Runtime run offline inside the Flatpak sandbox. They
+  make no network calls and add no telemetry.
 - API keys are stored in the owner-only settings file, are never written to the
   dock log or OBS log, and are never passed on a command line.
 - Only public live chat that the provider can read is accessed. Do not use the
@@ -433,12 +396,12 @@ dock's **Log** pane mirrors the important status and error lines.
 | `YouTube response changed; try the other provider` | The experimental provider's parsing no longer matches YouTube. Switch to the official provider (or update the plugin). |
 | `Network error; retrying` | Transient DNS/TLS/transport problem; wait for the capped backoff. If it persists, check connectivity to `youtube.googleapis.com` and the gRPC endpoint. |
 | Helper not found / chat never connects | Rebuild with `./scripts/build-helper.sh && ./scripts/build-flatpak.sh`; the Flatpak build now refuses to proceed without the helper. |
-| Audio stutters or lags behind chat | Lower the message rate/size filters, shorten **Max length**, or raise the **Queue limit** cautiously. Both engines are CPU-bound; Piper is more expensive per character. |
-| Spoken voice is robotic or draggy | **Engine** is espeak-ng, **Speed** is below `1.00x`, or the dock logged a Piper fallback reason. Select `Piper`, set **Speed** to `1.00x`, and fix the reported model error. For a clearly better voice, use the **Local server** engine with Kokoro. |
+| Audio is fast, choppy or overlaps | A duplicate `YouTube Chat TTS` source is draining the shared buffer. The plugin keeps only one active consumer and logs the others as silent; delete unused duplicates from **Sources**. |
+| Speech is too slow or too fast | Set **Speed** to `0.90`–`1.00x` for natural chat. `0.50x` is no longer exposed because it adds long pauses rather than slowing the words proportionally. |
 | Local server engine logs `not reachable` | The Kokoro/Pocket server is not running or the URL/port is wrong. Start it, check the URL ends at `/v1/audio/speech`, and press **Test Voice**. The plugin retries on the next message; OBS does not need a restart. |
 | Local server returns HTTP 4xx/5xx | The server rejects the voice/model names. Check **Server voice** and **Server model** against the server's documentation (`af_heart`/`kokoro` for Kokoro-FastAPI). |
-| Dock logs a Piper fallback or `piper model not found` | The extension is incomplete or a custom `piperModelPath`/`piperConfigPath` is wrong. Reinstall with `./scripts/build-flatpak.sh`, run `./scripts/smoke-flatpak.sh`, and clear the path overrides. |
-| Piper is slow on old hardware | Piper is CPU-only and the model is 61 MB. Enable **Low-latency streaming**, use espeak-ng, shorten **Max length**, or reduce chat volume. The 200-character reference target is under 1.5 s steady-state after the model load. |
+| Dock logs `Supertonic is unavailable` or a model-file error | The extension is incomplete or a custom `supertonicModelPath` is wrong. Reinstall with `./scripts/build-flatpak.sh`, run `./scripts/smoke-flatpak.sh`, and correct the path. |
+| Supertonic is slow on old hardware | It is CPU-only and the model is ~380 MB. Enable **Low-latency streaming**, lower **Denoising steps** to 4, shorten **Max length**, or reduce chat volume. |
 | Rebuild fails after an OBS update | OBS/runtime ABI changes require rebuilding the extension. Run the clean rebuild commands above. |
 | Build fails with a mount or busy error | A previous Flatpak build mount is stale. `flatpak kill com.obsproject.Studio`, remove any leftover `build-flatpak` directory, and rerun `scripts/build-flatpak.sh`. Do not delete `~/.var/app/com.obsproject.Studio`. |
 
@@ -457,16 +420,15 @@ CXXFLAGS="-I/path/to/obs/include" ./scripts/test-host.sh
 
 `./scripts/test-host.sh` builds and runs the C++ unit tests with CTest (chat
 client/JSONL parsing, settings and file mode, text normalization, message
-filtering, bounded queue, WAV parsing, espeak engine, Piper engine rate
-mapping/cancellation/error paths, backend selection, audio buffer, TTS worker)
+filtering, bounded queue, WAV parsing, Supertonic text/engine policy,
+settings, audio buffer and TTS worker)
 and then runs `go test ./...` and `go vet ./...` for the helper.
 
 Flatpak-side checks:
 
 ```bash
-./scripts/smoke-flatpak.sh          # layout, helper, espeak, Piper/ONNX, model, licenses, ldd
-./scripts/test-espeak-flatpak.sh    # espeak-ng runs inside the sandbox
-./scripts/test-piper-flatpak.sh     # real Piper synthesis, 200-char latency, error paths
+./scripts/smoke-flatpak.sh            # layout, helper, Supertonic/ONNX, licenses, ldd
+./scripts/test-supertonic-flatpak.sh  # real synthesis, 200-char benchmark, error paths
 ```
 
 Manual sandbox inspection:
@@ -500,57 +462,42 @@ Inside the extension prefix `/app/plugins/YtChatTts`:
 
 ```text
 lib/obs-plugins/yt-chat-tts.so                              OBS module
-lib/libpiper.so                                             bundled Piper library
-lib/libonnxruntime.so*                                      bundled ONNX Runtime (CPU)
+lib/libonnxruntime-ytc.so.1                                 bundled ONNX Runtime (CPU)
 share/obs/obs-plugins/yt-chat-tts/locale/en-US.ini          dock strings
 share/obs/obs-plugins/yt-chat-tts/bin/ytchat-helper         bundled chat helper
-share/obs/obs-plugins/yt-chat-tts/bin/espeak-ng             bundled espeak-ng fallback
-share/obs/obs-plugins/yt-chat-tts/bin/piper-probe           packaging/latency probe
-share/obs/obs-plugins/yt-chat-tts/espeak-ng-data/           espeak-ng voices and dictionaries
-share/obs/obs-plugins/yt-chat-tts/piper/en_US-ljspeech-medium.onnx
-share/obs/obs-plugins/yt-chat-tts/piper/en_US-ljspeech-medium.onnx.json
-share/obs/obs-plugins/yt-chat-tts/piper/espeak-ng-data/     data for the pinned libpiper espeak-ng
+share/obs/obs-plugins/yt-chat-tts/bin/supertonic-probe      packaging/latency probe
+share/obs/obs-plugins/yt-chat-tts/supertonic/onnx/          Supertonic 3 ONNX models
+share/obs/obs-plugins/yt-chat-tts/supertonic/voice_styles/  ten voice styles
+share/obs/obs-plugins/yt-chat-tts/supertonic/LICENSE        model license
 share/metainfo/com.obsproject.Studio.Plugin.YtChatTts.metainfo.xml
 share/licenses/com.obsproject.Studio.Plugin.YtChatTts/LICENSE
 share/licenses/com.obsproject.Studio.Plugin.YtChatTts/THIRD_PARTY_NOTICES.md
-share/licenses/com.obsproject.Studio.Plugin.YtChatTts/LICENSES/espeak-ng.txt
-share/licenses/com.obsproject.Studio.Plugin.YtChatTts/LICENSES/espeak-ng-pinned/
-share/licenses/com.obsproject.Studio.Plugin.YtChatTts/LICENSES/ljspeech/MODEL_CARD.md
 share/licenses/com.obsproject.Studio.Plugin.YtChatTts/LICENSES/onnxruntime/
-share/licenses/com.obsproject.Studio.Plugin.YtChatTts/LICENSES/piper/
+share/licenses/com.obsproject.Studio.Plugin.YtChatTts/LICENSES/supertonic/
+share/licenses/com.obsproject.Studio.Plugin.YtChatTts/LICENSES/supertonic-3/
 share/licenses/com.obsproject.Studio.Plugin.YtChatTts/LICENSES/go/
 ```
 
-The espeak-ng executable is statically linked against its own library and has
-no `libespeak-ng.so` dependency. It is invoked as a separate process with
-`ESPEAK_DATA_PATH` pointing at the bundled data directory. Build-only espeak-ng
-headers, static libraries, pkg-config files and vim/man documentation are
-removed by the manifest and are not shipped. Piper's `piper_exe` and
-`piper.h` are also build-only and pruned from the installed extension; the
-plugin links `libpiper.so`/`libonnxruntime.so` directly.
+ONNX Runtime headers and the `patchelf` helper are build-only and pruned from
+the installed extension. The plugin links `libonnxruntime-ytc.so.1` directly.
 
-The `piper-probe` binary is a packaged diagnostic/test tool used by
-`scripts/test-piper-flatpak.sh`. It synthesizes through the raw C API and the
-shipped engine, prints sample rate/sample counts and 200-character timings, and
-exercises cancellation and missing-config error paths.
+The `supertonic-probe` binary is a packaged diagnostic/test tool used by
+`scripts/test-supertonic-flatpak.sh`. It synthesizes through the shipped
+`SupertonicEngine`, prints sample rate/sample counts and timings, exercises
+cancellation, and reports peak RSS.
 
 ## Limitations
 
-- Piper is CPU-only and adds about 63 MB of model data plus ONNX Runtime to the
-  extension (roughly 100–140 MB installed). Synthesis is much faster than
-  real time on a typical desktop CPU after the one-time model load, but it is
-  heavier per character than espeak-ng on very low-end hardware.
-- Only one Piper voice is bundled: `en_US-ljspeech-medium` (US English female,
-  public-domain LJ Speech dataset). `en_US-lessac-medium` is not bundled
-  because its dataset license is research-only. Multiple/downloadable Piper
-  voices are out of scope.
-- Pitch and amplitude controls do not apply to Piper; they remain espeak-ng
-  options and are disabled while Piper is selected.
-- espeak-ng remains the fallback and is a formant synthesizer, so it sounds
-  robotic. It is also the lighter option for low-end machines.
-- The espeak voice set is English (US) plus the other English voices shipped
-  by espeak-ng (`en-us`, `en-gb`, `en-in`, `en-gb-scotland`, `en-029`, and any
-  custom espeak-ng voice name you type).
+- Supertonic is CPU-only and adds about 381 MB of model data plus ONNX
+  Runtime to the extension (roughly 440–470 MB installed). Synthesis is
+  faster than real time on a typical desktop CPU after the one-time model
+  load, but it is heavier per character than the removed espeak-ng fallback.
+- Only the ten built-in Supertonic voices are supported. Custom voice styles
+  and downloadable voices are out of scope.
+- Number/currency symbols and CJK text are unreliable without a language or
+  number normalizer; the engine is currently pinned to the `en` language tag.
+- There is no automatic fallback engine. A missing or corrupt model stops the
+  worker with a readable error instead of speaking through espeak-ng.
 - Only public live chat readable by the selected provider is supported. The
   official `streamList` path may reject chats for videos not owned by the key;
   that case is not claimed as verified.
@@ -570,22 +517,15 @@ exercises cancellation and missing-config error paths.
 
 ## Version
 
-**0.2.0** (2026-10-22). This release adds the bundled offline Piper neural
-voice engine alongside espeak-ng, with engine-aware Voice controls, a Piper
-Speed slider (0.00x-3.00x), collapsed Queue/Log sections, and UI fixes. It
-also fixes Piper speed direction, multi-word locale labels, and the bundled
-ONNX Runtime SONAME isolation.
-
-The `v0.2.0` release is published from `feature/piper-tts` after merging it
-into `main`. See [`docs/release-notes-v0.2.0.md`](docs/release-notes-v0.2.0.md)
-for the full release notes.
+**0.3.0** (2026-11-03). Supertonic 3 is now the bundled engine; Piper and
+espeak-ng were removed. The local OpenAI-compatible server engine remains.
+A missing or corrupt Supertonic model now reports a clear error instead of
+falling back to espeak-ng.
 
 ## License
 
 Project code is GPL-2.0-or-later; see [`LICENSE`](LICENSE). Third-party
 components and their licenses are documented in
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). The full espeak-ng
-GPL-3.0-or-later text used by the bundled executable is in
-[`LICENSES/espeak-ng.txt`](LICENSES/espeak-ng.txt), and authoritative texts for
-every statically linked Go dependency are vendored under
-[`LICENSES/go/`](LICENSES/go/).
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). Authoritative texts for
+ONNX Runtime, the Supertonic model and inference code, and every statically
+linked Go dependency are vendored under [`LICENSES/`](LICENSES/).

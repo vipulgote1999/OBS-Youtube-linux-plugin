@@ -7,13 +7,15 @@ Voice: `F1`. Speed: `1.00×`. Output: 22,050 Hz mono float.
 
 ## Decision
 
-Keep Supertonic 3 bundled and selectable **alongside** Piper and espeak-ng.
-Do not remove the existing engines yet: Supertonic is competitive on long
-messages, but its memory use, short-message latency and number/currency
-handling need more listening and real-chat evidence first.
+Supertonic 3 is the bundled engine. **Piper and espeak-ng were removed** after
+this evaluation (2026-11-03); the local OpenAI-compatible server engine
+remains as the alternative. Supertonic is the default, with `F1`, 8 denoising
+steps and `1.00×` defaults. The UI exposes 0.90–1.50× because lower values add
+long pauses instead of slowing the words proportionally.
 
-Piper remains the default. Supertonic's settings default to `F1`, 8 denoising
-steps and `1.00×`; 4 steps is the faster option for evaluation.
+There is no automatic fallback engine: a missing or corrupt Supertonic model
+stops the worker with a readable error. This is documented in the README and
+the 0.3.0 release metadata.
 
 ## OBS playback speed: duplicate source consumers (fixed)
 

@@ -9,21 +9,32 @@
   <description>
     <p>
       YouTube Chat TTS adds a dock to OBS Studio that reads YouTube live chat
-      messages aloud with the bundled offline espeak-ng speech engine and feeds
-      the synthesized speech into OBS as a native audio source. Streams and
-      recordings carry spoken chat like any other audio; no virtual audio cable
-      or cloud speech service is involved.
+      messages aloud with the bundled offline Supertonic 3 speech engine and
+      feeds the synthesized speech into OBS as a native audio source. Streams
+      and recordings carry spoken chat like any other audio; no virtual audio
+      cable or cloud speech service is involved.
     </p>
     <ul>
       <li>Connect with the official YouTube Data API v3 (API key required) or with the experimental keyless InnerTube provider; Auto mode prefers the official API and falls back to InnerTube when it is unavailable.</li>
       <li>Filter messages by length, per-user and global cooldown, command prefix, URLs, blocklisted phrases, Super Chats, new members and moderators.</li>
-      <li>Choose the espeak-ng voice and adjust rate, pitch, amplitude and output volume while connected.</li>
+      <li>Choose one of ten bundled Supertonic voices and adjust speed, denoising steps and output volume while connected.</li>
       <li>Add the TTS audio source to the current scene or to all scenes and record it on any OBS audio track.</li>
       <li>See connection state, the active provider, the next queued messages and the last 500 log lines in the dock.</li>
       <li>Keep settings and the API key in an owner-only (0600) settings file; the key is passed to the helper on stdin and never appears in logs or process arguments.</li>
     </ul>
   </description>
   <releases>
+    <release version="0.3.0" date="2026-11-03">
+      <description>
+        <p>Supertonic 3 is now the bundled engine; Piper and espeak-ng were removed.</p>
+        <ul>
+          <li>Bundled Supertonic 3 with ten voice styles and adjustable denoising steps.</li>
+          <li>44.1 kHz model output resampled to the OBS source's 22.05 kHz contract.</li>
+          <li>The local OpenAI-compatible server engine remains available.</li>
+          <li>Missing or corrupt models now report a clear error instead of falling back to espeak-ng.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-10-22">
       <description>
         <p>Second release: adds the bundled offline Piper neural voice engine alongside espeak-ng, with engine-aware controls, speed control, and UI fixes.</p>

@@ -47,30 +47,6 @@ bool obs_module_load(void)
              chatConfig.helperPath.toUtf8().constData());
     }
 
-    const QString espeakPath =
-        pluginContext->settings().espeakPath.isEmpty()
-            ? resolveBundledPath(QStringLiteral("bin/espeak-ng"))
-            : pluginContext->settings().espeakPath;
-    if (espeakPath.isEmpty()) {
-        blog(LOG_WARNING, "[%s] espeak-ng not found; tried: %s", PLUGIN_NAME,
-             bundledPathCandidates(QStringLiteral("bin/espeak-ng"))
-                 .join(QStringLiteral(", "))
-                 .toUtf8()
-                 .constData());
-    } else {
-        blog(LOG_INFO, "[%s] espeak-ng: %s", PLUGIN_NAME,
-             espeakPath.toUtf8().constData());
-    }
-
-    const QString espeakData = resolveBundledPath(QStringLiteral("espeak-ng-data"));
-    if (espeakData.isEmpty()) {
-        blog(LOG_WARNING, "[%s] espeak-ng data directory not found; using the system default",
-             PLUGIN_NAME);
-    } else {
-        blog(LOG_INFO, "[%s] espeak-ng data: %s", PLUGIN_NAME,
-             espeakData.toUtf8().constData());
-    }
-
     QWidget *mainWindow = static_cast<QWidget *>(obs_frontend_get_main_window());
     auto *dockWidget = new YtChatTtsDock(pluginContext, mainWindow);
 
@@ -89,8 +65,8 @@ void obs_module_unload(void)
 {
     /* Stop the chat helper and the TTS worker before any widget can reference
      * the context, then destroy the dock, then the context.  This ordering is
-     * what guarantees the dock never sees a dangling context and no helper or
-     * espeak-ng child outlives the module. */
+     * what guarantees the dock never sees a dangling context and no helper
+     * child outlives the module. */
     if (pluginContext) {
         pluginContext->disconnectChat();
         blog(LOG_INFO, "[%s] chat helper and TTS worker stopped", PLUGIN_NAME);

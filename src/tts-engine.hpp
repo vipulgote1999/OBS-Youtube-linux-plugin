@@ -32,8 +32,8 @@ public:
      * Optional streaming variant.
      *
      * Default: synthesize the whole utterance and offer it as one final chunk,
-     * so engines without a chunked API (espeak, local server) work unchanged.
-     * Piper overrides this to emit each libpiper chunk as it arrives.
+     * so engines without a chunked API work unchanged.  Supertonic overrides
+     * this to emit each sentence chunk as it arrives.
      */
     virtual bool synthesizeStreaming(const QString &text, const ChunkSink &sink,
                                      int *sampleRate, QString *error)
