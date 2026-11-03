@@ -20,6 +20,7 @@ flatpak run --command=sh com.obsproject.Studio -c '
   PIPER_ESPEAK_DATA="$DATA/piper/espeak-ng-data"
   LIBPIPER="$PREFIX/lib/libpiper.so"
   ONNXRUNTIME="$PREFIX/lib/libonnxruntime-ytc.so.1"
+  SUPERTONIC="$DATA/supertonic"
 
   test -f "$MODULE"
   test -f "$DATA/locale/en-US.ini"
@@ -34,6 +35,19 @@ flatpak run --command=sh com.obsproject.Studio -c '
   test -f "$PIPER_CONFIG"
   test -d "$PIPER_ESPEAK_DATA"
   test -x "$PROBE"
+
+  # Supertonic 3: all four ONNX sessions, the config/indexer and all ten voices.
+  test -f "$SUPERTONIC/onnx/duration_predictor.onnx"
+  test -f "$SUPERTONIC/onnx/text_encoder.onnx"
+  test -f "$SUPERTONIC/onnx/vector_estimator.onnx"
+  test -f "$SUPERTONIC/onnx/vocoder.onnx"
+  test -f "$SUPERTONIC/onnx/tts.json"
+  test -f "$SUPERTONIC/onnx/unicode_indexer.json"
+  for voice in F1 F2 F3 F4 F5 M1 M2 M3 M4 M5; do
+    test -f "$SUPERTONIC/voice_styles/$voice.json"
+  done
+  test -f "$SUPERTONIC/LICENSE"
+
   test -e "$LIBPIPER"
   test -e "$ONNXRUNTIME"
   # The unique SONAME is the isolation point; the generic symlinks are kept
@@ -65,6 +79,8 @@ flatpak run --command=sh com.obsproject.Studio -c '
     LICENSES/onnxruntime/ThirdPartyNotices.txt \
     LICENSES/piper/COPYING \
     LICENSES/piper/uni_algo-NOTICE.txt \
+    LICENSES/supertonic-3/LICENSE \
+    LICENSES/supertonic-3/SOURCE.md \
     LICENSES/go/genproto-LICENSE \
     LICENSES/go/gjson-LICENSE \
     LICENSES/go/grpc-LICENSE \
@@ -99,4 +115,4 @@ flatpak run --command=sh com.obsproject.Studio -c '
   test ! -e "$PREFIX/lib/pkgconfig/espeak-ng.pc"
 '
 
-echo "smoke: extension installed (module, locale, helper, espeak-ng, piper, metainfo, licenses)"
+echo "smoke: extension installed (module, locale, helper, espeak-ng, piper, supertonic, metainfo, licenses)"

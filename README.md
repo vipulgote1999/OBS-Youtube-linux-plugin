@@ -1,11 +1,12 @@
 # OBS YouTube Chat TTS
 
-A Flatpak extension for OBS Studio that reads YouTube live chat aloud with a
-bundled offline neural [Piper](https://github.com/OHF-Voice/piper1-gpl) voice
-(CPU-only) and mixes the synthesized speech into OBS as a native audio source.
-The bundled [espeak-ng](https://github.com/espeak-ng/espeak-ng) engine remains
-available and is the automatic fallback. There is no cloud TTS, no virtual
-audio cable and no Python inside OBS.
+A Flatpak extension for OBS Studio that reads YouTube live chat aloud with
+bundled offline neural voices — [Piper](https://github.com/OHF-Voice/piper1-gpl)
+or [Supertonic 3](https://huggingface.co/supertone-oss-archive/supertonic-3)
+(CPU-only) — and mixes the synthesized speech into OBS as a native audio
+source. The bundled [espeak-ng](https://github.com/espeak-ng/espeak-ng) engine
+remains available and is the automatic fallback. There is no cloud TTS, no
+virtual audio cable and no Python inside OBS.
 
 The extension is a C++17/Qt 6 OBS module built inside the
 `org.freedesktop.Sdk//25.08` sandbox and installed as
@@ -27,11 +28,16 @@ the experimental keyless InnerTube provider.
 - **Offline neural speech** through a bundled Piper `libpiper` + ONNX Runtime
   runtime and the public-domain `en_US-ljspeech-medium` voice. Synthesis is
   CPU-only and the model is loaded once per worker, not per message.
-- **Engine selector**: `Piper — natural (CPU)` (default), `espeak-ng — fast
-  fallback`, or `Local server — Kokoro / Pocket (experimental)`; the audio is
-  fed to a native OBS input source named `YouTube Chat TTS`.
-- **Low-latency streaming** for Piper: each sentence is pushed to OBS as it is
-  synthesized instead of after the whole message. Toggle it off in the dock.
+- **Supertonic 3** through the same ONNX Runtime, with ten bundled voice styles
+  and a 4–16 step denoising control. It is a larger (≈380 MB) experimental
+  engine, selected from the same dock.
+- **Engine selector**: `Piper — natural (CPU)` (default),
+  `Supertonic — natural (CPU, experimental)`, `espeak-ng — fast fallback`, or
+  `Local server — Kokoro / Pocket (experimental)`; the audio is fed to a native
+  OBS input source named `YouTube Chat TTS`.
+- **Low-latency streaming** for Piper and Supertonic: each sentence is pushed
+  to OBS as it is synthesized instead of after the whole message. Toggle it off
+  in the dock.
 - **Local high-quality engines**: point the plugin at an OpenAI-compatible TTS
   server you run (Kokoro, Pocket TTS, ...) to get a noticeably better voice
   without bundling a second model.
@@ -70,11 +76,13 @@ the experimental keyless InnerTube provider.
 The first SDK install is a large one-time download. The SDK is not vendored in
 this repository.
 
-Piper needs no GPU or CUDA and no runtime network access, but it makes the
-extension much larger: the LJSpeech model is about 63 MB, ONNX Runtime adds
-about 21 MB of shared libraries, and the installed extension is roughly
-100–140 MB instead of the espeak-only size. Those files are bundled so the
-extension stays offline and self-contained.
+The neural engines need no GPU or CUDA and no runtime network access, but they
+make the extension much larger: the LJSpeech model is about 63 MB, the
+Supertonic 3 model and ten voices are about 381 MB, ONNX Runtime adds about
+21 MB of shared libraries, and the installed extension is roughly 500–550 MB
+instead of the espeak-only size. Those files are bundled so the extension stays
+offline and self-contained. Remove the Supertonic module from the Flatpak
+manifest if you only need Piper.
 
 ## Quick install (prebuilt Flatpak bundle)
 
@@ -225,11 +233,12 @@ file is unaffected.
 
 ### Speech engines, voice and rate
 
-The **Engine** selector has three entries:
+The **Engine** selector has four entries:
 
 | Engine | Voice | Notes |
 | --- | --- | --- |
 | `Piper — natural (CPU)` (default) | `LJSpeech — US female (medium)` | Bundled `en_US-ljspeech-medium` model, 22,050 Hz mono float, public-domain LJ Speech dataset. CPU-only; the model is loaded once per worker. |
+| `Supertonic — natural (CPU, experimental)` | Ten built-in styles: `F1`–`F5`, `M1`–`M5` | Bundled Supertonic 3 model, ~380 MB, 44,100 Hz output resampled to 22,050 Hz. Denoising steps are adjustable (4–16; 8 is the default). |
 | `espeak-ng — fast fallback` | Existing espeak-ng English voices | Small and fast; robotic formant synthesis. |
 | `Local server — Kokoro / Pocket (experimental)` | Whatever the server offers | Talks to a local OpenAI-compatible `/v1/audio/speech` endpoint. The best quality option; the model runs outside the plugin. |
 
@@ -271,12 +280,15 @@ How the controls apply:
   `1.00x`; values below `1.00x` drag the voice and are the most common cause of
   a "low quality" first impression. A saved `0.00` is migrated to `1.00` when
   settings load, because `0.00` stretched the voice to one-third speed. The
-  default espeak **Rate** is 165.
+  default espeak **Rate** is 165. Supertonic has its own **Speed** slider
+  (0.50–2.00×) and a **Denoising steps** control (4–16; 8 is the default,
+  higher is slower and often cleaner).
 - **Pitch** and **Amplitude** are espeak-only. They are disabled (greyed) for
-  Piper and the local server with an explanatory tooltip.
-- **Low-latency streaming** applies to Piper. libpiper emits one chunk per
-  sentence, so multi-sentence messages start speaking sooner; a one-sentence
-  message is unchanged. The audio is identical and still DC-blocked and faded.
+  Piper, Supertonic and the local server with an explanatory tooltip.
+- **Low-latency streaming** applies to Piper and Supertonic. Each engine emits
+  one chunk per sentence, so multi-sentence messages start speaking sooner; a
+  one-sentence message is unchanged. The audio is identical and still
+  DC-blocked and faded.
 - **Volume** applies to every engine and is owned by the audio buffer.
 - Changing **Engine** or **Voice** restarts the speech worker so the next
   utterance uses the new selection; the chat connection is not dropped.

@@ -5,8 +5,9 @@ models apply to its third-party dependencies:
 
 - **Bundled** components are copied into the extension image: the Piper
   `libpiper` library with its statically linked pinned espeak-ng, ONNX Runtime,
-  the LJSpeech voice model and config, the espeak-ng 1.51 fallback executable
-  and data, and the statically linked Go chat helper.
+  the LJSpeech voice model and config, the Supertonic 3 model with its ten
+  voice styles, the espeak-ng 1.51 fallback executable and data, and the
+  statically linked Go chat helper.
 - **Dynamically linked** components are provided by the OBS Studio Flatpak
   runtime and are not copied into the extension: Qt 6, `libobs` and
   `obs-frontend-api`.
@@ -81,6 +82,28 @@ code; GPL-2.0-or-later is compatible with GPL-3.0-or-later.
 
 The `en_US-lessac-medium` voice is **not** bundled: its Lessac/Blizzard
 dataset license is research-only and is not suitable for a public release.
+
+## Supertonic 3 model and voices (bundled data)
+
+- Upstream model: <https://huggingface.co/supertone-oss-archive/supertonic-3>
+- Pinned revision:
+  `aafc6e32416a594460b32413efc49d7fe4ce6d46`
+- License: **BigScience Open RAIL-M**; the full text is reproduced verbatim
+  from the model repository in
+  [`LICENSES/supertonic-3/LICENSE`](LICENSES/supertonic-3/LICENSE), with the
+  pin and installed layout recorded in
+  [`LICENSES/supertonic-3/SOURCE.md`](LICENSES/supertonic-3/SOURCE.md).
+- Files: four ONNX models (`duration_predictor`, `text_encoder`,
+  `vector_estimator`, `vocoder`), `tts.json`, `unicode_indexer.json`, and the
+  ten voice styles in `voice_styles/{F1..F5,M1..M5}.json`. The Flatpak manifest
+  pins every file by SHA-256.
+- Upstream inference code: <https://github.com/supertone-oss-archive/supertonic>
+  (MIT). The plugin ports that archived C++ inference path; no Python or
+  network service is used at runtime.
+- Installed under
+  `/app/plugins/YtChatTts/share/obs/obs-plugins/yt-chat-tts/supertonic/`.
+- Open RAIL-M use-based restrictions apply to the model and its outputs; the
+  model is bundled unmodified.
 
 ## espeak-ng 1.51 (bundled fallback executable)
 
