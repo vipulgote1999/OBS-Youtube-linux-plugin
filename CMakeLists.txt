@@ -372,4 +372,18 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME test_piper_engine COMMAND test_piper_engine)
+
+    # Pure text preprocessing for the Supertonic engine: no ONNX Runtime.
+    add_executable(test_supertonic_text
+        tests/test_supertonic_text.cpp
+        src/supertonic-text.cpp
+    )
+
+    target_include_directories(test_supertonic_text PRIVATE src)
+    target_link_libraries(test_supertonic_text PRIVATE
+        Qt6::Core
+        Qt6::Test
+    )
+
+    add_test(NAME test_supertonic_text COMMAND test_supertonic_text)
 endif()
