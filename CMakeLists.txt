@@ -386,4 +386,20 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME test_supertonic_text COMMAND test_supertonic_text)
+
+    # Supertonic engine policy (rate conversion, clamps, cancellation) with a
+    # fake API: no ONNX Runtime needed on the host.
+    add_executable(test_supertonic_engine
+        tests/test_supertonic_engine.cpp
+        src/supertonic-engine.cpp
+        src/audio-resampler.cpp
+    )
+
+    target_include_directories(test_supertonic_engine PRIVATE src)
+    target_link_libraries(test_supertonic_engine PRIVATE
+        Qt6::Core
+        Qt6::Test
+    )
+
+    add_test(NAME test_supertonic_engine COMMAND test_supertonic_engine)
 endif()
