@@ -15,10 +15,14 @@ find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network)
 # when PIPER_ROOT (or the normal system paths) provides piper.h and both
 # libraries.  The Flatpak build passes -DPIPER_ROOT=/app/plugins/YtChatTts.
 set(PIPER_ROOT "" CACHE PATH "Prefix containing libpiper and ONNX Runtime")
+set(ONNXRUNTIME_ROOT "" CACHE PATH "Prefix containing ONNX Runtime headers and library")
 
 find_path(PIPER_INCLUDE_DIR NAMES piper.h HINTS "${PIPER_ROOT}/include")
 find_library(PIPER_LIBRARY NAMES piper HINTS "${PIPER_ROOT}/lib")
-find_library(ONNXRUNTIME_LIBRARY NAMES onnxruntime HINTS "${PIPER_ROOT}/lib")
+find_path(ONNXRUNTIME_INCLUDE_DIR NAMES onnxruntime_cxx_api.h
+    HINTS "${ONNXRUNTIME_ROOT}/include" "${PIPER_ROOT}/include")
+find_library(ONNXRUNTIME_LIBRARY NAMES onnxruntime
+    HINTS "${ONNXRUNTIME_ROOT}/lib" "${PIPER_ROOT}/lib")
 
 if(PIPER_INCLUDE_DIR AND PIPER_LIBRARY AND ONNXRUNTIME_LIBRARY)
     set(YTCHAT_PIPER_AVAILABLE ON)
@@ -26,6 +30,14 @@ if(PIPER_INCLUDE_DIR AND PIPER_LIBRARY AND ONNXRUNTIME_LIBRARY)
 else()
     set(YTCHAT_PIPER_AVAILABLE OFF)
     message(STATUS "Piper backend: not found; building without libpiper")
+endif()
+
+if(ONNXRUNTIME_INCLUDE_DIR AND ONNXRUNTIME_LIBRARY)
+    set(YTCHAT_SUPERTONIC_AVAILABLE ON)
+    message(STATUS "Supertonic backend: ${ONNXRUNTIME_LIBRARY} (headers: ${ONNXRUNTIME_INCLUDE_DIR})")
+else()
+    set(YTCHAT_SUPERTONIC_AVAILABLE OFF)
+    message(STATUS "Supertonic backend: ONNX Runtime not found; building without it")
 endif()
 
 add_library(yt-chat-tts MODULE
@@ -87,6 +99,25 @@ if(YTCHAT_PIPER_AVAILABLE)
 
     # yt-chat-tts.so is installed in <prefix>/lib/obs-plugins, while libpiper
     # and libonnxruntime are installed in <prefix>/lib.
+    set_target_properties(yt-chat-tts PROPERTIES INSTALL_RPATH "$ORIGIN/..")
+endif()
+
+# The Supertonic engine is independent of libpiper: it needs only ONNX Runtime
+# and the bundled model, so a host build with ONNXRUNTIME_ROOT can exercise it
+# even when Piper is absent.
+if(YTCHAT_SUPERTONIC_AVAILABLE)
+    target_sources(yt-chat-tts PRIVATE
+        src/supertonic-text.cpp
+        src/supertonic-text.hpp
+        src/supertonic-engine.cpp
+        src/supertonic-engine.hpp
+        src/supertonic-api.hpp
+        src/libsupertonic-api.cpp
+        src/libsupertonic-api.hpp
+    )
+    target_include_directories(yt-chat-tts PRIVATE "${ONNXRUNTIME_INCLUDE_DIR}")
+    target_compile_definitions(yt-chat-tts PRIVATE HAVE_SUPERTONIC=1)
+    target_link_libraries(yt-chat-tts PRIVATE "${ONNXRUNTIME_LIBRARY}")
     set_target_properties(yt-chat-tts PROPERTIES INSTALL_RPATH "$ORIGIN/..")
 endif()
 
@@ -402,4 +433,9 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME test_supertonic_engine COMMAND test_supertonic_engine)
+
+    add_executable(test_supertonic_pimpl_header tests/compile_supertonic_pimpl.cpp)
+    target_include_directories(test_supertonic_pimpl_header PRIVATE src)
+    target_link_libraries(test_supertonic_pimpl_header PRIVATE Qt6::Core)
+    add_test(NAME test_supertonic_pimpl_header COMMAND test_supertonic_pimpl_header)
 endif()
