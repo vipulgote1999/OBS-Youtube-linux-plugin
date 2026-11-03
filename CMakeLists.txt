@@ -384,6 +384,18 @@ if(BUILD_TESTING)
 
     add_test(NAME test_audio_buffer COMMAND test_audio_buffer)
 
+    add_executable(test_audio_consumer
+        tests/test_audio_consumer.cpp
+    )
+
+    target_include_directories(test_audio_consumer PRIVATE src)
+    target_link_libraries(test_audio_consumer PRIVATE
+        Qt6::Core
+        Qt6::Test
+    )
+
+    add_test(NAME test_audio_consumer COMMAND test_audio_consumer)
+
     add_executable(test_speech_conditioner
         tests/test_speech_conditioner.cpp
         src/speech-conditioner.cpp

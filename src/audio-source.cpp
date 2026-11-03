@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "audio-bus.hpp"
+#include "audio-consumer.hpp"
 #include "version.h"
 
 namespace {
@@ -33,8 +34,15 @@ struct AudioSourceData {
     obs_source_t *source = nullptr;
     std::thread feeder;
     std::atomic<bool> running{true};
+    std::atomic<bool> active{false};
     uint64_t nextTsNs = 0;
 };
+
+/* One process-wide winner drains the buffer; every other source instance
+ * emits silence.  OBS creates all sources in the scene collection, so without
+ * this each duplicate would consume the same speech at 22050 samples/s and
+ * make the active source sound fast and choppy. */
+AudioConsumerArbiter consumerArbiter;
 
 const char *audio_source_get_name(void *typeData)
 {
@@ -75,8 +83,19 @@ void audio_source_feeder(AudioSourceData *data)
             data->nextTsNs = nowNs;
 
         /* pop() applies volume and clamping and zero-fills the rest, so an
-         * idle buffer still outputs a complete silence chunk. */
-        buffer.pop(frames.data(), frames.size());
+         * idle buffer still outputs a complete silence chunk.  Only the single
+         * active consumer may pop; duplicate/inactive source instances output
+         * silence instead of draining the shared buffer.  Releasing here also
+         * covers an OBS scene switch that skipped the deactivate callback. */
+        const bool active = data->active.load(std::memory_order_relaxed);
+        if (!active && consumerArbiter.isConsumer(data))
+            consumerArbiter.release(data);
+
+        const bool consumer = active && consumerArbiter.tryAcquire(data);
+        if (consumer)
+            buffer.pop(frames.data(), frames.size());
+        else
+            std::fill(frames.begin(), frames.end(), 0.0f);
 
         obs_source_audio audio{};
         audio.data[0] = reinterpret_cast<const uint8_t *>(frames.data());
@@ -107,6 +126,34 @@ void *audio_source_create(obs_data_t *settings, obs_source_t *source)
     return data;
 }
 
+void audio_source_activate(void *ptr)
+{
+    auto *data = static_cast<AudioSourceData *>(ptr);
+    if (!data)
+        return;
+
+    data->active.store(true, std::memory_order_relaxed);
+    if (consumerArbiter.tryAcquire(data)) {
+        blog(LOG_INFO, "[%s] audio source is the active TTS consumer", PLUGIN_NAME);
+    } else {
+        blog(LOG_WARNING,
+             "[%s] another YouTube Chat TTS source is already active; this source "
+             "will stay silent",
+             PLUGIN_NAME);
+    }
+}
+
+void audio_source_deactivate(void *ptr)
+{
+    auto *data = static_cast<AudioSourceData *>(ptr);
+    if (!data)
+        return;
+
+    data->active.store(false, std::memory_order_relaxed);
+    if (consumerArbiter.isConsumer(data))
+        consumerArbiter.release(data);
+}
+
 void audio_source_destroy(void *ptr)
 {
     auto *data = static_cast<AudioSourceData *>(ptr);
@@ -117,12 +164,18 @@ void audio_source_destroy(void *ptr)
      * safe here and guarantees no obs_source_output_audio() call happens after
      * this function returns. */
     data->running.store(false, std::memory_order_relaxed);
+    data->active.store(false, std::memory_order_relaxed);
+    const bool wasConsumer = consumerArbiter.isConsumer(data);
+    consumerArbiter.release(data);
     if (data->feeder.joinable())
         data->feeder.join();
 
     /* Do not leave up to 120 s of stale speech in the shared buffer: removing
-     * the source and re-adding it must not replay the previous session. */
-    AudioBus::instance().buffer().clear();
+     * the consumer and re-adding it must not replay the previous session.  A
+     * duplicate, non-consuming source must not clear the active source's
+     * audio when it is deleted. */
+    if (wasConsumer)
+        AudioBus::instance().buffer().clear();
 
     delete data;
 }
@@ -167,6 +220,8 @@ void register_audio_source()
     info.get_name = audio_source_get_name;
     info.create = audio_source_create;
     info.destroy = audio_source_destroy;
+    info.activate = audio_source_activate;
+    info.deactivate = audio_source_deactivate;
     info.update = audio_source_update;
     info.get_defaults = audio_source_get_defaults;
 
