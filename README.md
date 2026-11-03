@@ -1,4 +1,4 @@
-# OBS YouTube Chat TTS
+# YouTube Chat TTS
 
 A Flatpak extension for OBS Studio that reads YouTube live chat aloud with the
 bundled offline neural [Supertonic 3](https://huggingface.co/supertone-oss-archive/supertonic-3)
@@ -71,19 +71,19 @@ Those files are bundled so the extension stays offline and self-contained.
 
 ## Quick install (prebuilt Flatpak bundle)
 
-Download `OBS-Youtube-Chat-TTS-0.2.0.flatpak` from the
+Download `OBS-Youtube-Chat-TTS-0.3.0.flatpak` from the
 [latest release](https://github.com/vipulgote1999/OBS-Youtube-linux-plugin/releases/latest),
 then install it with Flatpak:
 
 ```bash
-flatpak install --user --bundle ./OBS-Youtube-Chat-TTS-0.2.0.flatpak
+flatpak install --user --bundle ./OBS-Youtube-Chat-TTS-0.3.0.flatpak
 ```
 
 Or download and install in two commands:
 
 ```bash
-wget https://github.com/vipulgote1999/OBS-Youtube-linux-plugin/releases/download/v0.2.0/OBS-Youtube-Chat-TTS-0.2.0.flatpak
-flatpak install --user --bundle ./OBS-Youtube-Chat-TTS-0.2.0.flatpak
+wget https://github.com/vipulgote1999/OBS-Youtube-linux-plugin/releases/download/v0.3.0/OBS-Youtube-Chat-TTS-0.3.0.flatpak
+flatpak install --user --bundle ./OBS-Youtube-Chat-TTS-0.3.0.flatpak
 ```
 
 Then restart OBS and open **Docks → YouTube Chat TTS**. Add the
@@ -97,7 +97,11 @@ flatpak install flathub com.obsproject.Studio
 ```
 
 SHA-256 for the bundle:
-`36d33d325b87c11be7529eab33e7419014d1b140a4c9198d8d9f77c11dbd2505`
+`8134d0c5ba990f5edb7f649dcafc3073e4f743c52ffcfdf79166aabee15b68b6`
+
+Release notes and the full changelog are in
+[`docs/release-notes-v0.3.0.md`](docs/release-notes-v0.3.0.md) and
+[`CHANGELOG.md`](CHANGELOG.md).
 
 ## Build, install and verify
 
@@ -521,6 +525,13 @@ cancellation, and reports peak RSS.
 espeak-ng were removed. The local OpenAI-compatible server engine remains.
 A missing or corrupt Supertonic model now reports a clear error instead of
 falling back to espeak-ng.
+
+## Development disclosure
+
+This project was developed with AI coding assistants and reviewed, tested and
+packaged by the maintainer. AI tools assisted with implementation, tests,
+documentation and audio-quality review. Every change was compiled and exercised
+through host tests, the Flatpak build/smoke tests, the Supertonic probe and OBS.
 
 ## License
 
