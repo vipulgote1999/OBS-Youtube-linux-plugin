@@ -24,6 +24,22 @@ constexpr int kUserCooldownMin = 0;
 constexpr int kUserCooldownMax = 3600;
 constexpr int kGlobalCooldownMin = 0;
 constexpr int kGlobalCooldownMax = 60;
+constexpr double kSupertonicSpeedMin = 0.5;
+constexpr double kSupertonicSpeedMax = 2.0;
+constexpr int kSupertonicStepsMin = 4;
+constexpr int kSupertonicStepsMax = 16;
+
+QString normalizeSupertonicVoice(const QString &voice)
+{
+    static const QStringList voices = {
+        QStringLiteral("F1"), QStringLiteral("F2"), QStringLiteral("F3"),
+        QStringLiteral("F4"), QStringLiteral("F5"), QStringLiteral("M1"),
+        QStringLiteral("M2"), QStringLiteral("M3"), QStringLiteral("M4"),
+        QStringLiteral("M5"),
+    };
+    const QString candidate = voice.trimmed().toUpper();
+    return voices.contains(candidate) ? candidate : QStringLiteral("F1");
+}
 
 void clampValues(Settings *settings)
 {
@@ -40,6 +56,14 @@ void clampValues(Settings *settings)
     if (settings->piperSpeed <= 0.0)
         settings->piperSpeed = 1.0;
     settings->piperSpeed = qBound(0.25, settings->piperSpeed, 3.0);
+    if (settings->supertonicSpeed <= 0.0)
+        settings->supertonicSpeed = 1.0;
+    settings->supertonicSpeed =
+        qBound(kSupertonicSpeedMin, settings->supertonicSpeed, kSupertonicSpeedMax);
+    settings->supertonicSteps =
+        qBound(kSupertonicStepsMin, settings->supertonicSteps, kSupertonicStepsMax);
+    settings->supertonicVoice = normalizeSupertonicVoice(settings->supertonicVoice);
+    settings->supertonicModelPath = settings->supertonicModelPath.trimmed();
     settings->userCooldownSec =
         qBound(kUserCooldownMin, settings->userCooldownSec, kUserCooldownMax);
     settings->globalCooldownSec =
@@ -58,6 +82,8 @@ void clampValues(Settings *settings)
         settings->ttsEngine = QStringLiteral("espeak");
     else if (engine == QLatin1String("local"))
         settings->ttsEngine = QStringLiteral("local");
+    else if (engine == QLatin1String("supertonic"))
+        settings->ttsEngine = QStringLiteral("supertonic");
     else
         settings->ttsEngine = QStringLiteral("piper");
 
@@ -137,6 +163,11 @@ Settings Settings::fromObsData(obs_data_t *data)
     settings.piperModelPath = readString("piperModelPath", settings.piperModelPath);
     settings.piperConfigPath = readString("piperConfigPath", settings.piperConfigPath);
     settings.piperSpeed = readDouble("piperSpeed", settings.piperSpeed);
+    settings.supertonicVoice = readString("supertonicVoice", settings.supertonicVoice);
+    settings.supertonicModelPath =
+        readString("supertonicModelPath", settings.supertonicModelPath);
+    settings.supertonicSpeed = readDouble("supertonicSpeed", settings.supertonicSpeed);
+    settings.supertonicSteps = readInt("supertonicSteps", settings.supertonicSteps);
     settings.streamAudio = readBool("streamAudio", settings.streamAudio);
     settings.localTtsUrl = readString("localTtsUrl", settings.localTtsUrl);
     settings.localTtsVoice = readString("localTtsVoice", settings.localTtsVoice);
@@ -179,6 +210,10 @@ obs_data_t *Settings::toObsData() const
     obs_data_set_string(data, "piperModelPath", piperModelPath.toUtf8().constData());
     obs_data_set_string(data, "piperConfigPath", piperConfigPath.toUtf8().constData());
     obs_data_set_double(data, "piperSpeed", piperSpeed);
+    obs_data_set_string(data, "supertonicVoice", supertonicVoice.toUtf8().constData());
+    obs_data_set_string(data, "supertonicModelPath", supertonicModelPath.toUtf8().constData());
+    obs_data_set_double(data, "supertonicSpeed", supertonicSpeed);
+    obs_data_set_int(data, "supertonicSteps", supertonicSteps);
     obs_data_set_bool(data, "streamAudio", streamAudio);
     obs_data_set_string(data, "localTtsUrl", localTtsUrl.toUtf8().constData());
     obs_data_set_string(data, "localTtsVoice", localTtsVoice.toUtf8().constData());
@@ -309,12 +344,16 @@ Settings Settings::loadFromFile(const QString &path, QString *error)
     return settings;
 }
 
-TtsBackend chooseTtsBackend(const Settings &settings, bool piperModelPresent)
+TtsBackend chooseTtsBackend(const Settings &settings, bool piperModelPresent,
+                            bool supertonicModelPresent)
 {
-    if (settings.ttsEngine.trimmed().compare(QLatin1String("local"), Qt::CaseInsensitive) == 0)
+    const QString engine = settings.ttsEngine.trimmed();
+    if (engine.compare(QLatin1String("local"), Qt::CaseInsensitive) == 0)
         return TtsBackend::Local;
-    if (settings.ttsEngine.trimmed().compare(QLatin1String("espeak"), Qt::CaseInsensitive) == 0)
+    if (engine.compare(QLatin1String("espeak"), Qt::CaseInsensitive) == 0)
         return TtsBackend::Espeak;
+    if (engine.compare(QLatin1String("supertonic"), Qt::CaseInsensitive) == 0)
+        return supertonicModelPresent ? TtsBackend::Supertonic : TtsBackend::Espeak;
     if (!piperModelPresent)
         return TtsBackend::Espeak;
     return TtsBackend::Piper;

@@ -26,6 +26,13 @@ struct Settings {
     QString piperModelPath;
     QString piperConfigPath;
     double piperSpeed = 1.0;
+    /* Bundled Supertonic 3 engine.  Voice is one of the ten model styles
+     * (F1-F5, M1-M5); the model path is a development override for an
+     * unpacked model directory. */
+    QString supertonicVoice = QStringLiteral("F1");
+    QString supertonicModelPath;
+    double supertonicSpeed = 1.0;
+    int supertonicSteps = 8;
     /* Stream Piper chunks to the audio buffer as they arrive instead of
      * waiting for the whole utterance.  Strictly a latency improvement, so it
      * is on by default and exposed as a checkbox. */
@@ -75,14 +82,16 @@ struct Settings {
 };
 
 /** Speech backend actually used by the TTS worker. */
-enum class TtsBackend { Piper, Espeak, Local };
+enum class TtsBackend { Piper, Espeak, Local, Supertonic };
 
 /**
- * Chooses the backend from the persisted engine choice and Piper availability.
+ * Chooses the backend from the persisted engine choice and model availability.
  *
- * An explicit "espeak" selection always wins.  "piper" only selects Piper when
- * a model is present; otherwise the plugin keeps speaking through espeak-ng
- * instead of going silent.  Runtime/config checks stay in PluginContext, which
- * can also fall back for a missing libpiper or helper resource.
+ * An explicit "espeak" selection always wins.  "piper" and "supertonic" only
+ * select their engine when the model is present; otherwise the plugin keeps
+ * speaking through espeak-ng instead of going silent.  Runtime/config checks
+ * stay in PluginContext, which can also fall back for a missing libpiper,
+ * ONNX Runtime, or helper resource.
  */
-TtsBackend chooseTtsBackend(const Settings &settings, bool piperModelPresent);
+TtsBackend chooseTtsBackend(const Settings &settings, bool piperModelPresent,
+                            bool supertonicModelPresent);

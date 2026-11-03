@@ -30,6 +30,10 @@ void compareSettings(const Settings &actual, const Settings &expected)
     QCOMPARE(actual.piperModelPath, expected.piperModelPath);
     QCOMPARE(actual.piperConfigPath, expected.piperConfigPath);
     QCOMPARE(actual.piperSpeed, expected.piperSpeed);
+    QCOMPARE(actual.supertonicVoice, expected.supertonicVoice);
+    QCOMPARE(actual.supertonicModelPath, expected.supertonicModelPath);
+    QCOMPARE(actual.supertonicSpeed, expected.supertonicSpeed);
+    QCOMPARE(actual.supertonicSteps, expected.supertonicSteps);
     QCOMPARE(actual.streamAudio, expected.streamAudio);
     QCOMPARE(actual.localTtsUrl, expected.localTtsUrl);
     QCOMPARE(actual.localTtsVoice, expected.localTtsVoice);
@@ -69,6 +73,10 @@ Settings changedSettings()
     settings.piperModelPath = QStringLiteral("/tmp/piper/ryan.onnx");
     settings.piperConfigPath = QStringLiteral("/tmp/piper/ryan.onnx.json");
     settings.piperSpeed = 0.75;
+    settings.supertonicVoice = QStringLiteral("M3");
+    settings.supertonicModelPath = QStringLiteral("/tmp/supertonic");
+    settings.supertonicSpeed = 1.25;
+    settings.supertonicSteps = 6;
     settings.rate = 200;
     settings.pitch = 60;
     settings.amplitude = 120;
@@ -102,6 +110,8 @@ private slots:
     void savesWithOwnerOnlyPermissionsAndReloads();
     void emptyPiperPathOverridesRoundTrip();
     void normalizesEngineAndPiperVoice();
+    void normalizesSupertonicVoiceAndEngine();
+    void clampsSupertonicControls();
     void dockFacingSettingsRoundTripThroughFile();
     void loadsDefaultsForMissingFile();
     void clampsInvalidValues();
@@ -186,6 +196,47 @@ void TestSettings::normalizesEngineAndPiperVoice()
     QCOMPARE(espeak.ttsEngine, QStringLiteral("espeak"));
 }
 
+void TestSettings::normalizesSupertonicVoiceAndEngine()
+{
+    obs_data_t *data = obs_data_create();
+    obs_data_set_string(data, "ttsEngine", "SuperTonic");
+    obs_data_set_string(data, "supertonicVoice", "M9");
+    const Settings normalized = Settings::fromObsData(data);
+    obs_data_release(data);
+
+    QCOMPARE(normalized.ttsEngine, QStringLiteral("supertonic"));
+    QCOMPARE(normalized.supertonicVoice, QStringLiteral("F1"));
+
+    obs_data_t *voiceData = obs_data_create();
+    obs_data_set_string(voiceData, "ttsEngine", "supertonic");
+    obs_data_set_string(voiceData, "supertonicVoice", "f5");
+    const Settings lowerCaseVoice = Settings::fromObsData(voiceData);
+    obs_data_release(voiceData);
+
+    QCOMPARE(lowerCaseVoice.supertonicVoice, QStringLiteral("F5"));
+}
+
+void TestSettings::clampsSupertonicControls()
+{
+    obs_data_t *data = obs_data_create();
+    obs_data_set_double(data, "supertonicSpeed", 5.0);
+    obs_data_set_int(data, "supertonicSteps", 99);
+    const Settings tooHigh = Settings::fromObsData(data);
+    obs_data_release(data);
+
+    QCOMPARE(tooHigh.supertonicSpeed, 2.0);
+    QCOMPARE(tooHigh.supertonicSteps, 16);
+
+    data = obs_data_create();
+    obs_data_set_double(data, "supertonicSpeed", 0.0);
+    obs_data_set_int(data, "supertonicSteps", 1);
+    const Settings tooLow = Settings::fromObsData(data);
+    obs_data_release(data);
+
+    QCOMPARE(tooLow.supertonicSpeed, 1.0);
+    QCOMPARE(tooLow.supertonicSteps, 4);
+}
+
 void TestSettings::dockFacingSettingsRoundTripThroughFile()
 {
     /* Mirrors the dock path: every control is copied into Settings, written
@@ -206,6 +257,10 @@ void TestSettings::dockFacingSettingsRoundTripThroughFile()
     original.piperModelPath = QStringLiteral("/tmp/piper/ryan.onnx");
     original.piperConfigPath = QStringLiteral("/tmp/piper/ryan.onnx.json");
     original.piperSpeed = 0.8;
+    original.supertonicVoice = QStringLiteral("F2");
+    original.supertonicModelPath = QStringLiteral("/tmp/supertonic");
+    original.supertonicSpeed = 0.85;
+    original.supertonicSteps = 10;
     original.rate = 220;
     original.pitch = 70;
     original.amplitude = 180;
@@ -240,6 +295,10 @@ void TestSettings::dockFacingSettingsRoundTripThroughFile()
     QCOMPARE(restored.piperModelPath, original.piperModelPath);
     QCOMPARE(restored.piperConfigPath, original.piperConfigPath);
     QCOMPARE(restored.piperSpeed, original.piperSpeed);
+    QCOMPARE(restored.supertonicVoice, original.supertonicVoice);
+    QCOMPARE(restored.supertonicModelPath, original.supertonicModelPath);
+    QCOMPARE(restored.supertonicSpeed, original.supertonicSpeed);
+    QCOMPARE(restored.supertonicSteps, original.supertonicSteps);
     QCOMPARE(restored.rate, original.rate);
     QCOMPARE(restored.pitch, original.pitch);
     QCOMPARE(restored.amplitude, original.amplitude);
@@ -283,6 +342,10 @@ void TestSettings::loadsDefaultsForMissingFile()
     QCOMPARE(settings.volume, 1.0);
     QCOMPARE(settings.maxChars, 200);
     QCOMPARE(settings.piperSpeed, 1.0);
+    QCOMPARE(settings.supertonicVoice, QStringLiteral("F1"));
+    QVERIFY(settings.supertonicModelPath.isEmpty());
+    QCOMPARE(settings.supertonicSpeed, 1.0);
+    QCOMPARE(settings.supertonicSteps, 8);
     QCOMPARE(settings.userCooldownSec, 30);
     QCOMPARE(settings.globalCooldownSec, 2);
     QCOMPARE(settings.queueLimit, 25);

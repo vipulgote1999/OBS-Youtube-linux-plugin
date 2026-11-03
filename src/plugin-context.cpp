@@ -249,7 +249,9 @@ bool PluginContext::ensureWorker(QString *error)
                              : forcedEspeakReason_;
     } else {
         piper = resolvePiperResources(settings_);
-        backend = chooseTtsBackend(settings_, !piper.modelPath.isEmpty());
+        /* Supertonic resource detection is wired in the next change; until
+         * then a hand-edited supertonic selection speaks through espeak. */
+        backend = chooseTtsBackend(settings_, !piper.modelPath.isEmpty(), false);
 
         /* A requested Piper engine that cannot be created must never go
          * silent: speak through espeak-ng and log the exact missing
