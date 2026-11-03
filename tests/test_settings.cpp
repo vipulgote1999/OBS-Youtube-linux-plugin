@@ -24,15 +24,15 @@ void compareSettings(const Settings &actual, const Settings &expected)
     QCOMPARE(actual.provider, expected.provider);
     QCOMPARE(actual.apiKey, expected.apiKey);
     QCOMPARE(actual.videoUrl, expected.videoUrl);
-    QCOMPARE(actual.voice, expected.voice);
     QCOMPARE(actual.ttsEngine, expected.ttsEngine);
-    QCOMPARE(actual.piperVoice, expected.piperVoice);
-    QCOMPARE(actual.piperModelPath, expected.piperModelPath);
-    QCOMPARE(actual.piperConfigPath, expected.piperConfigPath);
-    QCOMPARE(actual.piperSpeed, expected.piperSpeed);
-    QCOMPARE(actual.rate, expected.rate);
-    QCOMPARE(actual.pitch, expected.pitch);
-    QCOMPARE(actual.amplitude, expected.amplitude);
+    QCOMPARE(actual.supertonicVoice, expected.supertonicVoice);
+    QCOMPARE(actual.supertonicModelPath, expected.supertonicModelPath);
+    QCOMPARE(actual.supertonicSpeed, expected.supertonicSpeed);
+    QCOMPARE(actual.supertonicSteps, expected.supertonicSteps);
+    QCOMPARE(actual.streamAudio, expected.streamAudio);
+    QCOMPARE(actual.localTtsUrl, expected.localTtsUrl);
+    QCOMPARE(actual.localTtsVoice, expected.localTtsVoice);
+    QCOMPARE(actual.localTtsModel, expected.localTtsModel);
     QCOMPARE(actual.volume, expected.volume);
     QCOMPARE(actual.readAuthor, expected.readAuthor);
     QCOMPARE(actual.authorTemplate, expected.authorTemplate);
@@ -50,7 +50,6 @@ void compareSettings(const Settings &actual, const Settings &expected)
     QCOMPARE(actual.readModerators, expected.readModerators);
     QCOMPARE(actual.autoConnect, expected.autoConnect);
     QCOMPARE(actual.helperPath, expected.helperPath);
-    QCOMPARE(actual.espeakPath, expected.espeakPath);
 }
 
 Settings changedSettings()
@@ -59,15 +58,15 @@ Settings changedSettings()
     settings.provider = QStringLiteral("innertube");
     settings.apiKey = QStringLiteral("secret-key");
     settings.videoUrl = QStringLiteral("https://youtu.be/abcdefghijk");
-    settings.voice = QStringLiteral("en-gb");
-    settings.ttsEngine = QStringLiteral("espeak");
-    settings.piperVoice = QStringLiteral("en_US-ryan-high");
-    settings.piperModelPath = QStringLiteral("/tmp/piper/ryan.onnx");
-    settings.piperConfigPath = QStringLiteral("/tmp/piper/ryan.onnx.json");
-    settings.piperSpeed = 0.75;
-    settings.rate = 200;
-    settings.pitch = 60;
-    settings.amplitude = 120;
+    settings.ttsEngine = QStringLiteral("local");
+    settings.supertonicVoice = QStringLiteral("M3");
+    settings.supertonicModelPath = QStringLiteral("/tmp/supertonic");
+    settings.supertonicSpeed = 1.25;
+    settings.supertonicSteps = 6;
+    settings.streamAudio = false;
+    settings.localTtsUrl = QStringLiteral("http://127.0.0.1:9999/v1/audio/speech");
+    settings.localTtsVoice = QStringLiteral("am_michael");
+    settings.localTtsModel = QStringLiteral("kokoro");
     settings.volume = 0.75;
     settings.readAuthor = false;
     settings.authorTemplate = QStringLiteral("{author}: {message}");
@@ -85,7 +84,6 @@ Settings changedSettings()
     settings.readModerators = false;
     settings.autoConnect = true;
     settings.helperPath = QStringLiteral("/tmp/ytchat-helper");
-    settings.espeakPath = QStringLiteral("/usr/bin/espeak-ng");
     return settings;
 }
 } // namespace
@@ -96,8 +94,9 @@ class TestSettings : public QObject {
 private slots:
     void roundTripsThroughObsData();
     void savesWithOwnerOnlyPermissionsAndReloads();
-    void emptyPiperPathOverridesRoundTrip();
-    void normalizesEngineAndPiperVoice();
+    void migratesRemovedEnginesToSupertonic();
+    void normalizesSupertonicVoiceAndEngine();
+    void clampsSupertonicControls();
     void dockFacingSettingsRoundTripThroughFile();
     void loadsDefaultsForMissingFile();
     void clampsInvalidValues();
@@ -139,46 +138,72 @@ void TestSettings::savesWithOwnerOnlyPermissionsAndReloads()
     compareSettings(restored, original);
 }
 
-void TestSettings::emptyPiperPathOverridesRoundTrip()
+void TestSettings::migratesRemovedEnginesToSupertonic()
 {
-    QTemporaryDir directory;
-    QVERIFY2(directory.isValid(), "temporary directory is not available");
-    const QString path = directory.filePath(QStringLiteral("settings.json"));
+    for (const char *removed : {"piper", "espeak", "PIper", "not-an-engine"}) {
+        obs_data_t *data = obs_data_create();
+        obs_data_set_string(data, "ttsEngine", removed);
+        const Settings migrated = Settings::fromObsData(data);
+        obs_data_release(data);
 
-    Settings original;
-    original.ttsEngine = QStringLiteral("piper");
-    original.piperVoice = QStringLiteral("en_US-ljspeech-medium");
-    original.piperModelPath.clear();
-    original.piperConfigPath.clear();
+        QCOMPARE(migrated.ttsEngine, QStringLiteral("supertonic"));
+    }
 
-    QString error;
-    QVERIFY2(original.saveToFile(path, &error), qPrintable(error));
-    const Settings restored = Settings::loadFromFile(path, &error);
-    QVERIFY2(error.isEmpty(), qPrintable(error));
+    obs_data_t *localData = obs_data_create();
+    obs_data_set_string(localData, "ttsEngine", "local");
+    const Settings local = Settings::fromObsData(localData);
+    obs_data_release(localData);
 
-    QCOMPARE(restored.ttsEngine, QStringLiteral("piper"));
-    QCOMPARE(restored.piperVoice, QStringLiteral("en_US-ljspeech-medium"));
-    QVERIFY(restored.piperModelPath.isEmpty());
-    QVERIFY(restored.piperConfigPath.isEmpty());
+    QCOMPARE(local.ttsEngine, QStringLiteral("local"));
 }
 
-void TestSettings::normalizesEngineAndPiperVoice()
+void TestSettings::normalizesSupertonicVoiceAndEngine()
 {
     obs_data_t *data = obs_data_create();
-    obs_data_set_string(data, "ttsEngine", "not-an-engine");
-    obs_data_set_string(data, "piperVoice", "");
-    const Settings invalid = Settings::fromObsData(data);
+    obs_data_set_string(data, "ttsEngine", "SuperTonic");
+    obs_data_set_string(data, "supertonicVoice", "M9");
+    const Settings normalized = Settings::fromObsData(data);
     obs_data_release(data);
 
-    QCOMPARE(invalid.ttsEngine, QStringLiteral("piper"));
-    QCOMPARE(invalid.piperVoice, QStringLiteral("en_US-ljspeech-medium"));
+    QCOMPARE(normalized.ttsEngine, QStringLiteral("supertonic"));
+    QCOMPARE(normalized.supertonicVoice, QStringLiteral("F1"));
 
-    obs_data_t *espeakData = obs_data_create();
-    obs_data_set_string(espeakData, "ttsEngine", "espeak");
-    const Settings espeak = Settings::fromObsData(espeakData);
-    obs_data_release(espeakData);
+    obs_data_t *voiceData = obs_data_create();
+    obs_data_set_string(voiceData, "ttsEngine", "supertonic");
+    obs_data_set_string(voiceData, "supertonicVoice", "f5");
+    const Settings lowerCaseVoice = Settings::fromObsData(voiceData);
+    obs_data_release(voiceData);
 
-    QCOMPARE(espeak.ttsEngine, QStringLiteral("espeak"));
+    QCOMPARE(lowerCaseVoice.supertonicVoice, QStringLiteral("F5"));
+}
+
+void TestSettings::clampsSupertonicControls()
+{
+    obs_data_t *data = obs_data_create();
+    obs_data_set_double(data, "supertonicSpeed", 5.0);
+    obs_data_set_int(data, "supertonicSteps", 99);
+    const Settings tooHigh = Settings::fromObsData(data);
+    obs_data_release(data);
+
+    QCOMPARE(tooHigh.supertonicSpeed, 1.5);
+    QCOMPARE(tooHigh.supertonicSteps, 16);
+
+    data = obs_data_create();
+    obs_data_set_double(data, "supertonicSpeed", 0.5);
+    obs_data_set_int(data, "supertonicSteps", 4);
+    const Settings belowNatural = Settings::fromObsData(data);
+    obs_data_release(data);
+
+    QCOMPARE(belowNatural.supertonicSpeed, 0.9);
+
+    data = obs_data_create();
+    obs_data_set_double(data, "supertonicSpeed", 0.0);
+    obs_data_set_int(data, "supertonicSteps", 1);
+    const Settings tooLow = Settings::fromObsData(data);
+    obs_data_release(data);
+
+    QCOMPARE(tooLow.supertonicSpeed, 1.0);
+    QCOMPARE(tooLow.supertonicSteps, 4);
 }
 
 void TestSettings::dockFacingSettingsRoundTripThroughFile()
@@ -195,15 +220,15 @@ void TestSettings::dockFacingSettingsRoundTripThroughFile()
     original.provider = QStringLiteral("official");
     original.apiKey = QStringLiteral("AIza-dock-test-key");
     original.videoUrl = QStringLiteral("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
-    original.voice = QStringLiteral("en-gb-scotland");
-    original.ttsEngine = QStringLiteral("piper");
-    original.piperVoice = QStringLiteral("en_US-ryan-high");
-    original.piperModelPath = QStringLiteral("/tmp/piper/ryan.onnx");
-    original.piperConfigPath = QStringLiteral("/tmp/piper/ryan.onnx.json");
-    original.piperSpeed = 0.8;
-    original.rate = 220;
-    original.pitch = 70;
-    original.amplitude = 180;
+    original.ttsEngine = QStringLiteral("supertonic");
+    original.supertonicVoice = QStringLiteral("F2");
+    original.supertonicModelPath = QStringLiteral("/tmp/supertonic");
+    original.supertonicSpeed = 1.25;
+    original.supertonicSteps = 10;
+    original.streamAudio = false;
+    original.localTtsUrl = QStringLiteral("http://127.0.0.1:8880/v1/audio/speech");
+    original.localTtsVoice = QStringLiteral("af_heart");
+    original.localTtsModel = QStringLiteral("kokoro");
     original.volume = 0.35;
     original.readAuthor = false;
     original.authorTemplate = QStringLiteral("{author} says: {message}");
@@ -226,34 +251,7 @@ void TestSettings::dockFacingSettingsRoundTripThroughFile()
     const Settings restored = Settings::loadFromFile(path, &error);
     QVERIFY2(error.isEmpty(), qPrintable(error));
 
-    QCOMPARE(restored.provider, original.provider);
-    QCOMPARE(restored.apiKey, original.apiKey);
-    QCOMPARE(restored.videoUrl, original.videoUrl);
-    QCOMPARE(restored.voice, original.voice);
-    QCOMPARE(restored.ttsEngine, original.ttsEngine);
-    QCOMPARE(restored.piperVoice, original.piperVoice);
-    QCOMPARE(restored.piperModelPath, original.piperModelPath);
-    QCOMPARE(restored.piperConfigPath, original.piperConfigPath);
-    QCOMPARE(restored.piperSpeed, original.piperSpeed);
-    QCOMPARE(restored.rate, original.rate);
-    QCOMPARE(restored.pitch, original.pitch);
-    QCOMPARE(restored.amplitude, original.amplitude);
-    QCOMPARE(restored.volume, original.volume);
-    QCOMPARE(restored.readAuthor, original.readAuthor);
-    QCOMPARE(restored.authorTemplate, original.authorTemplate);
-    QCOMPARE(restored.maxChars, original.maxChars);
-    QCOMPARE(restored.userCooldownSec, original.userCooldownSec);
-    QCOMPARE(restored.globalCooldownSec, original.globalCooldownSec);
-    QCOMPARE(restored.queueLimit, original.queueLimit);
-    QCOMPARE(restored.skipCommands, original.skipCommands);
-    QCOMPARE(restored.commandPrefix, original.commandPrefix);
-    QCOMPARE(restored.stripUrls, original.stripUrls);
-    QCOMPARE(restored.skipBlocked, original.skipBlocked);
-    QCOMPARE(restored.blocklist, original.blocklist);
-    QCOMPARE(restored.speakSuperchats, original.speakSuperchats);
-    QCOMPARE(restored.speakMemberships, original.speakMemberships);
-    QCOMPARE(restored.readModerators, original.readModerators);
-    QCOMPARE(restored.autoConnect, original.autoConnect);
+    compareSettings(restored, original);
 }
 
 void TestSettings::loadsDefaultsForMissingFile()
@@ -267,17 +265,13 @@ void TestSettings::loadsDefaultsForMissingFile()
 
     QVERIFY2(error.isEmpty(), qPrintable(error));
     QCOMPARE(settings.provider, QStringLiteral("auto"));
-    QCOMPARE(settings.voice, QStringLiteral("en-us"));
-    QCOMPARE(settings.ttsEngine, QStringLiteral("piper"));
-    QCOMPARE(settings.piperVoice, QStringLiteral("en_US-ljspeech-medium"));
-    QVERIFY(settings.piperModelPath.isEmpty());
-    QVERIFY(settings.piperConfigPath.isEmpty());
-    QCOMPARE(settings.rate, 165);
-    QCOMPARE(settings.pitch, 50);
-    QCOMPARE(settings.amplitude, 150);
+    QCOMPARE(settings.ttsEngine, QStringLiteral("supertonic"));
+    QCOMPARE(settings.supertonicVoice, QStringLiteral("F1"));
+    QVERIFY(settings.supertonicModelPath.isEmpty());
+    QCOMPARE(settings.supertonicSpeed, 1.0);
+    QCOMPARE(settings.supertonicSteps, 8);
     QCOMPARE(settings.volume, 1.0);
     QCOMPARE(settings.maxChars, 200);
-    QCOMPARE(settings.piperSpeed, 0.85);
     QCOMPARE(settings.userCooldownSec, 30);
     QCOMPARE(settings.globalCooldownSec, 2);
     QCOMPARE(settings.queueLimit, 25);
@@ -299,9 +293,6 @@ void TestSettings::clampsInvalidValues()
     obs_data_t *data = obs_data_create();
     obs_data_set_int(data, "maxChars", 9999);
     obs_data_set_int(data, "queueLimit", 0);
-    obs_data_set_int(data, "rate", 5);
-    obs_data_set_int(data, "pitch", -1);
-    obs_data_set_int(data, "amplitude", 999);
     obs_data_set_double(data, "volume", 5.0);
     obs_data_set_int(data, "userCooldownSec", -5);
     obs_data_set_int(data, "globalCooldownSec", 9999);
@@ -311,9 +302,6 @@ void TestSettings::clampsInvalidValues()
 
     QCOMPARE(settings.maxChars, 500);
     QCOMPARE(settings.queueLimit, 1);
-    QCOMPARE(settings.rate, 80);
-    QCOMPARE(settings.pitch, 0);
-    QCOMPARE(settings.amplitude, 200);
     QCOMPARE(settings.volume, 1.5);
     QCOMPARE(settings.userCooldownSec, 0);
     QCOMPARE(settings.globalCooldownSec, 60);

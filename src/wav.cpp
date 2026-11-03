@@ -2,6 +2,8 @@
 
 #include <QtEndian>
 
+#include <cstring>
+
 namespace {
 constexpr quint32 kUnknownDataSize = 0xFFFFFFFFu;
 constexpr quint32 kMinimumFmtSize = 16;
@@ -142,5 +144,117 @@ bool parseWav(const QByteArray &bytes, std::vector<float> *pcm, int *sampleRate,
     }
 
     *sampleRate = int(kSampleRate);
+    return true;
+}
+
+bool parseWavToMono(const QByteArray &bytes, std::vector<float> *pcm, int *sampleRate,
+                    QString *error)
+{
+    if (error)
+        error->clear();
+    if (!pcm || !sampleRate)
+        return fail(error, QStringLiteral("invalid WAV output buffer"));
+    pcm->clear();
+    *sampleRate = 0;
+
+    if (bytes.size() < kRiffHeaderSize)
+        return fail(error, QStringLiteral("truncated WAV header"));
+    if (bytes.left(4) != QByteArrayLiteral("RIFF") ||
+        bytes.mid(8, 4) != QByteArrayLiteral("WAVE")) {
+        return fail(error, QStringLiteral("not a RIFF/WAVE file"));
+    }
+
+    bool haveFmt = false;
+    quint16 audioFormat = 0;
+    quint16 channels = 0;
+    quint16 bitsPerSample = 0;
+    quint32 rate = 0;
+    qint64 dataOffset = -1;
+    qint64 dataSize = 0;
+
+    int offset = kRiffHeaderSize;
+    while (offset + 8 <= bytes.size()) {
+        const QByteArray chunkId = bytes.mid(offset, 4);
+        const quint32 declaredSize = readU32(bytes, offset + 4);
+        const int payloadOffset = offset + 8;
+        const qint64 remaining = bytes.size() - payloadOffset;
+
+        if (chunkId == QByteArrayLiteral("fmt ")) {
+            if (declaredSize < kMinimumFmtSize || qint64(declaredSize) > remaining)
+                return fail(error, QStringLiteral("invalid WAV fmt chunk"));
+            audioFormat = readU16(bytes, payloadOffset);
+            channels = readU16(bytes, payloadOffset + 2);
+            rate = readU32(bytes, payloadOffset + 4);
+            bitsPerSample = readU16(bytes, payloadOffset + 14);
+            if (audioFormat == 0xFFFE && declaredSize >= 26)
+                audioFormat = readU16(bytes, payloadOffset + 24);
+            haveFmt = true;
+        } else if (chunkId == QByteArrayLiteral("data")) {
+            if (dataOffset < 0) {
+                dataOffset = payloadOffset;
+                dataSize = (declaredSize == 0 || declaredSize == kUnknownDataSize ||
+                            qint64(declaredSize) > remaining)
+                               ? remaining
+                               : qint64(declaredSize);
+            }
+            if (declaredSize == 0 || declaredSize == kUnknownDataSize ||
+                qint64(declaredSize) > remaining)
+                break;
+        }
+
+        qint64 next = qint64(payloadOffset) + qint64(declaredSize);
+        if (declaredSize & 1)
+            ++next;
+        if (next <= offset || next > bytes.size())
+            break;
+        offset = int(next);
+    }
+
+    if (!haveFmt)
+        return fail(error, QStringLiteral("missing WAV fmt chunk"));
+    if (audioFormat != 1 && audioFormat != 3) {
+        return fail(error, QStringLiteral("unsupported WAV format %1").arg(audioFormat));
+    }
+    if (channels != 1 && channels != 2) {
+        return fail(error, QStringLiteral("unsupported WAV channel count %1")
+                               .arg(channels));
+    }
+    if ((audioFormat == 1 && bitsPerSample != 16) || (audioFormat == 3 && bitsPerSample != 32)) {
+        return fail(error, QStringLiteral("unsupported WAV bit depth %1")
+                               .arg(bitsPerSample));
+    }
+    if (dataOffset < 0)
+        return fail(error, QStringLiteral("missing WAV data chunk"));
+
+    if (dataOffset > bytes.size())
+        dataSize = 0;
+    else if (dataSize > bytes.size() - dataOffset)
+        dataSize = bytes.size() - dataOffset;
+
+    const int bytesPerSample = bitsPerSample / 8;
+    const int frameBytes = bytesPerSample * channels;
+    if (dataSize < frameBytes)
+        return fail(error, QStringLiteral("WAV data chunk is empty"));
+
+    const qint64 frames = dataSize / frameBytes;
+    pcm->reserve(size_t(frames));
+    const uchar *data = reinterpret_cast<const uchar *>(bytes.constData()) + dataOffset;
+
+    for (qint64 frame = 0; frame < frames; ++frame) {
+        double sum = 0.0;
+        for (int channel = 0; channel < channels; ++channel) {
+            const uchar *sample = data + frame * frameBytes + channel * bytesPerSample;
+            if (audioFormat == 3) {
+                float value = 0.0f;
+                std::memcpy(&value, sample, sizeof(value));
+                sum += value;
+            } else {
+                sum += double(qint16(qFromLittleEndian<quint16>(sample))) / 32768.0;
+            }
+        }
+        pcm->push_back(float(sum / channels));
+    }
+
+    *sampleRate = int(rate);
     return true;
 }

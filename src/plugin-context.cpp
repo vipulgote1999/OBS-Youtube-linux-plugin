@@ -1,8 +1,10 @@
 #include "plugin-context.hpp"
 
 #include <QDateTime>
+#include <QDir>
 #include <QFileInfo>
 #include <QStringList>
+#include <QThread>
 #include <QTimer>
 
 #include <algorithm>
@@ -11,18 +13,18 @@
 #include "audio-bus.hpp"
 #include "audio-source.hpp"
 #include "chat-client.hpp"
-#include "espeak-engine.hpp"
+#include "local-tts-engine.hpp"
 #include "paths.hpp"
 #include "tts-engine.hpp"
 #include "tts-worker.hpp"
 
-#ifdef HAVE_LIBPIPER
-#include "libpiper-api.hpp"
-#include "piper-engine.hpp"
+#ifdef HAVE_SUPERTONIC
+#include "libsupertonic-api.hpp"
+#include "supertonic-engine.hpp"
 #endif
 
 namespace {
-constexpr char kDefaultPiperVoice[] = "en_US-ljspeech-medium";
+constexpr char kDefaultSupertonicVoice[] = "F1";
 
 QString formatMessage(const ChatMessage &msg)
 {
@@ -39,145 +41,108 @@ QString formatMessage(const ChatMessage &msg)
     return line;
 }
 
-QString piperRuntimeProblem()
+QString supertonicRuntimeProblem()
 {
-#ifdef HAVE_LIBPIPER
+#ifdef HAVE_SUPERTONIC
     return {};
 #else
-    // The hard link to libpiper/ONNX Runtime is a packaging-integrity choice:
-    // a host build without the runtime simply speaks through espeak-ng.
+    /* The plugin no longer has an espeak fallback.  A host build without ONNX
+     * Runtime must fail at engine creation with a readable error rather than
+     * going silent. */
     return QStringLiteral(
-        "this build has no libpiper/ONNX Runtime (HAVE_LIBPIPER is not defined)");
+        "this build has no ONNX Runtime (HAVE_SUPERTONIC is not defined)");
 #endif
 }
 
-QString piperVoiceOrDefault(const Settings &settings)
+QString supertonicVoiceOrDefault(const Settings &settings)
 {
-    const QString voice = settings.piperVoice.trimmed();
-    return voice.isEmpty() ? QString::fromLatin1(kDefaultPiperVoice) : voice;
+    static const QStringList voices = {
+        QStringLiteral("F1"), QStringLiteral("F2"), QStringLiteral("F3"),
+        QStringLiteral("F4"), QStringLiteral("F5"), QStringLiteral("M1"),
+        QStringLiteral("M2"), QStringLiteral("M3"), QStringLiteral("M4"),
+        QStringLiteral("M5"),
+    };
+    const QString voice = settings.supertonicVoice.trimmed().toUpper();
+    return voices.contains(voice) ? voice : QString::fromLatin1(kDefaultSupertonicVoice);
 }
 
-struct PiperResources {
-    QString modelPath;
-    QString configPath;
-    QString espeakDataPath;
-    /* Empty when the requested Piper engine can be created; otherwise each
+struct SupertonicResources {
+    QString modelDir;
+    QString voicePath;
+    /* Empty when the requested Supertonic engine can be created; otherwise each
      * entry explains one missing resource/runtime in user-facing terms. */
     QStringList problems;
 };
 
-/* Resolves the bundled voice/model/config/espeak data without touching native
- * code or the UI thread.  Explicit settings paths win over bundled files. */
-PiperResources resolvePiperResources(const Settings &settings)
+/* Resolves the bundled model and the selected voice style.  The model layout is
+ * documented in docs/superpowers/specs/2026-11-03-supertonic-engine-design.md:
+ * <modelDir>/onnx/*.onnx plus <modelDir>/voice_styles/<voice>.json. */
+SupertonicResources resolveSupertonicResources(const Settings &settings)
 {
-    PiperResources resources;
+    SupertonicResources resources;
 
-    const QString voice = piperVoiceOrDefault(settings);
-    const QString modelRelative = QStringLiteral("piper/") + voice + QStringLiteral(".onnx");
-    const QString configRelative = modelRelative + QStringLiteral(".json");
-
-    const QString configuredModel = settings.piperModelPath.trimmed();
+    const QString configuredModel = settings.supertonicModelPath.trimmed();
     if (!configuredModel.isEmpty()) {
-        if (QFileInfo(configuredModel).isFile()) {
-            resources.modelPath = configuredModel;
+        if (QFileInfo(configuredModel).isDir()) {
+            resources.modelDir = configuredModel;
         } else {
-            resources.problems.append(QStringLiteral("piper model does not exist: ") +
+            resources.problems.append(QStringLiteral("supertonic model does not exist: ") +
                                       configuredModel);
         }
     } else {
-        resources.modelPath = resolveBundledPath(modelRelative);
-        if (resources.modelPath.isEmpty()) {
+        resources.modelDir = resolveBundledPath(QStringLiteral("supertonic"));
+        if (resources.modelDir.isEmpty()) {
             resources.problems.append(
-                QStringLiteral("piper model not found; looked for: ") +
-                bundledPathCandidates(modelRelative).join(QStringLiteral(", ")));
+                QStringLiteral("supertonic model not found; looked for: ") +
+                bundledPathCandidates(QStringLiteral("supertonic"))
+                    .join(QStringLiteral(", ")));
         }
     }
 
-    const QString configuredConfig = settings.piperConfigPath.trimmed();
-    if (!configuredConfig.isEmpty()) {
-        if (QFileInfo(configuredConfig).isFile()) {
-            resources.configPath = configuredConfig;
-        } else {
-            resources.problems.append(QStringLiteral("piper config does not exist: ") +
-                                      configuredConfig);
+    if (!resources.modelDir.isEmpty()) {
+        /* Accept either the package directory (with onnx/) or the onnx
+         * directory itself, matching LibSupertonicApi's resolution. */
+        const QString nestedOnnx = QDir(resources.modelDir).filePath(QStringLiteral("onnx"));
+        const QString onnxDir =
+            QFileInfo(nestedOnnx).isDir() ? nestedOnnx : resources.modelDir;
+        const QStringList required = {
+            QStringLiteral("duration_predictor.onnx"),
+            QStringLiteral("text_encoder.onnx"),
+            QStringLiteral("vector_estimator.onnx"),
+            QStringLiteral("vocoder.onnx"),
+            QStringLiteral("tts.json"),
+            QStringLiteral("unicode_indexer.json"),
+        };
+        for (const QString &file : required) {
+            const QString path = QDir(onnxDir).filePath(file);
+            if (!QFileInfo(path).isFile())
+                resources.problems.append(QStringLiteral("supertonic model file missing: ") +
+                                          path);
         }
-    } else {
-        // libpiper's convention: <model>.onnx.json sits next to the model.
-        const QString sibling =
-            resources.modelPath.isEmpty() ? QString()
-                                          : resources.modelPath + QStringLiteral(".json");
-        if (!sibling.isEmpty() && QFileInfo(sibling).isFile())
-            resources.configPath = sibling;
+
+        const QString voice = supertonicVoiceOrDefault(settings);
+        const QString packageVoice =
+            QDir(resources.modelDir)
+                .filePath(QStringLiteral("voice_styles/") + voice + QStringLiteral(".json"));
+        const QString parentVoice =
+            QDir(resources.modelDir)
+                .filePath(QStringLiteral("../voice_styles/") + voice + QStringLiteral(".json"));
+        if (QFileInfo(packageVoice).isFile())
+            resources.voicePath = packageVoice;
+        else if (QFileInfo(parentVoice).isFile())
+            resources.voicePath = QFileInfo(parentVoice).canonicalFilePath();
         else
-            resources.configPath = resolveBundledPath(configRelative);
-
-        if (resources.configPath.isEmpty()) {
-            resources.problems.append(
-                QStringLiteral("piper config not found; looked for: ") +
-                bundledPathCandidates(configRelative).join(QStringLiteral(", ")));
-        }
+            resources.problems.append(QStringLiteral("supertonic voice not found: ") +
+                                      packageVoice);
     }
 
-    const QString espeakDataRelative = QStringLiteral("piper/espeak-ng-data");
-    resources.espeakDataPath = resolveBundledPath(espeakDataRelative);
-    if (resources.espeakDataPath.isEmpty()) {
-        resources.problems.append(
-            QStringLiteral("piper espeak-ng data not found; looked for: ") +
-            bundledPathCandidates(espeakDataRelative).join(QStringLiteral(", ")));
-    }
-
-    const QString runtimeProblem = piperRuntimeProblem();
+    const QString runtimeProblem = supertonicRuntimeProblem();
     if (!runtimeProblem.isEmpty())
         resources.problems.append(runtimeProblem);
 
     return resources;
 }
 
-struct EspeakSelection {
-    std::unique_ptr<TtsEngine> engine;
-    QString binaryPath;
-    QString dataPath;
-};
-
-/* Resolves and validates the bundled espeak-ng binary.  Errors here are fatal
- * for the connection/test because espeak-ng is the last-resort engine. */
-bool createEspeakEngine(const Settings &settings, EspeakSelection *selection, QString *error)
-{
-    QString binaryPath = settings.espeakPath;
-    if (binaryPath.isEmpty())
-        binaryPath = resolveBundledPath(QStringLiteral("bin/espeak-ng"));
-
-    if (binaryPath.isEmpty()) {
-        const QString tried = bundledPathCandidates(QStringLiteral("bin/espeak-ng"))
-                                  .join(QStringLiteral(", "));
-        if (error)
-            *error = QStringLiteral("espeak-ng was not found; looked for: ") + tried;
-        return false;
-    }
-
-    const QFileInfo binaryInfo(binaryPath);
-    if (!binaryInfo.exists() || !binaryInfo.isFile()) {
-        if (error)
-            *error = QStringLiteral("espeak-ng does not exist: ") + binaryPath;
-        return false;
-    }
-    if (!binaryInfo.isExecutable()) {
-        if (error)
-            *error = QStringLiteral("espeak-ng is not executable: ") + binaryPath;
-        return false;
-    }
-
-    /* The data directory may legitimately be absent in a host install where
-     * espeak-ng uses its system data; the Flatpak extension always bundles it. */
-    const QString dataPath = resolveBundledPath(QStringLiteral("espeak-ng-data"));
-
-    selection->binaryPath = binaryPath;
-    selection->dataPath = dataPath;
-    selection->engine = std::make_unique<EspeakEngine>(binaryPath, dataPath, settings.voice,
-                                                       settings.rate, settings.pitch,
-                                                       settings.amplitude);
-    return true;
-}
 } // namespace
 
 PluginContext::PluginContext(QObject *parent)
@@ -233,92 +198,62 @@ bool PluginContext::ensureWorker(QString *error)
             emit logLine(QStringLiteral("tts worker restarted for engine change"));
     }
 
-    const bool piperRequested =
-        settings_.ttsEngine.trimmed().compare(QLatin1String("espeak"), Qt::CaseInsensitive) != 0;
-    TtsBackend backend = TtsBackend::Espeak;
-    QString fallbackReason;
-    PiperResources piper;
+    const bool localRequested = settings_.ttsEngine.trimmed().compare(
+                                    QLatin1String("local"), Qt::CaseInsensitive) == 0;
+    SupertonicResources supertonic;
 
-    if (forcedEspeak_) {
-        /* A Piper engine already failed to initialize in this session.  Keep
-         * speaking through espeak until the user changes the engine or asks
-         * for an explicit restart. */
-        fallbackReason = forcedEspeakReason_.isEmpty()
-                             ? QStringLiteral("piper could not initialize")
-                             : forcedEspeakReason_;
+    if (localRequested) {
+        auto local = std::make_unique<LocalTtsEngine>(
+            settings_.localTtsUrl, settings_.localTtsVoice, settings_.localTtsModel);
+        installWorker(std::move(local));
+        emit logLine(QStringLiteral("tts engine: local server (") + settings_.localTtsUrl +
+                     QLatin1Char(')'));
+        emit logLine(QStringLiteral("local tts voice: ") + settings_.localTtsVoice);
     } else {
-        piper = resolvePiperResources(settings_);
-        backend = chooseTtsBackend(settings_, !piper.modelPath.isEmpty());
-
-        /* A requested Piper engine that cannot be created must never go
-         * silent: speak through espeak-ng and log the exact missing
-         * resource/runtime. */
-        if (backend == TtsBackend::Piper && !piper.problems.isEmpty())
-            backend = TtsBackend::Espeak;
-    }
-
-    if (backend == TtsBackend::Piper) {
-#ifdef HAVE_LIBPIPER
-        const QString voice = piperVoiceOrDefault(settings_);
-        auto api = std::make_unique<LibPiperApi>(piper.modelPath, piper.configPath,
-                                                 piper.espeakDataPath);
-        auto piperEngine = std::make_unique<PiperEngine>(std::move(api), settings_.rate);
-        piperEngine->setSpeed(static_cast<float>(settings_.piperSpeed));
-        installWorker(std::move(piperEngine));
-
-        // Report the engine this context actually created, after every check.
-        // Construction is lazy: a corrupt model is detected on the worker's
-        // first synth, where engineUnavailable() triggers the espeak fallback.
-        emit logLine(QStringLiteral("tts engine: piper (") + voice + QLatin1Char(')'));
-        emit logLine(QStringLiteral("piper model: ") + piper.modelPath);
-        emit logLine(QStringLiteral("piper config: ") + piper.configPath);
-        emit logLine(QStringLiteral("piper data: ") + piper.espeakDataPath);
-#else
-        // Unreachable: piperRuntimeProblem() adds a problem above, but keep a
-        // defensive fallback in case that check ever changes.
-        backend = TtsBackend::Espeak;
-#endif
-    }
-
-    if (backend == TtsBackend::Espeak) {
-        QString reason = fallbackReason;
-        if (reason.isEmpty() && piperRequested) {
-            reason = piper.problems.isEmpty()
-                         ? QStringLiteral("piper runtime is unavailable")
-                         : piper.problems.join(QStringLiteral("; "));
-        }
-
-        EspeakSelection espeak;
-        if (!createEspeakEngine(settings_, &espeak, error))
+        supertonic = resolveSupertonicResources(settings_);
+        if (!supertonic.problems.isEmpty()) {
+            if (error)
+                *error = QStringLiteral("Supertonic is unavailable: ") +
+                         supertonic.problems.join(QStringLiteral("; "));
             return false;
-
-        /* Only claim espeak-ng is active after it actually constructed. */
-        if (piperRequested && !reason.isEmpty()) {
-            emit logLine(QStringLiteral("tts engine: espeak-ng (fallback: ") + reason +
-                         QLatin1Char(')'));
-        } else {
-            emit logLine(QStringLiteral("tts engine: espeak-ng"));
         }
 
-        installWorker(std::move(espeak.engine));
-        emit logLine(QStringLiteral("espeak: ") + espeak.binaryPath);
-        emit logLine(espeak.dataPath.isEmpty()
-                         ? QStringLiteral("espeak data: bundled data not found")
-                         : QStringLiteral("espeak data: ") + espeak.dataPath);
+#ifdef HAVE_SUPERTONIC
+        const QString voice = supertonicVoiceOrDefault(settings_);
+        /* Leave OBS room to render: half the cores, never more than four. */
+        const int threads = qBound(1, QThread::idealThreadCount() / 2, 4);
+        auto api = std::make_unique<LibSupertonicApi>(supertonic.modelDir,
+                                                      supertonic.voicePath,
+                                                      QStringLiteral("en"), threads);
+        auto engine = std::make_unique<SupertonicEngine>(std::move(api));
+        engine->setSpeed(static_cast<float>(settings_.supertonicSpeed));
+        engine->setSteps(settings_.supertonicSteps);
+        installWorker(std::move(engine));
+
+        emit logLine(QStringLiteral("tts engine: supertonic (") + voice + QLatin1Char(')'));
+        emit logLine(QStringLiteral("supertonic model: ") + supertonic.modelDir);
+        emit logLine(QStringLiteral("supertonic voice: ") + supertonic.voicePath);
+        emit logLine(QStringLiteral("supertonic steps: ") +
+                     QString::number(settings_.supertonicSteps));
+#else
+        if (error)
+            *error = QStringLiteral(
+                "this build has no ONNX Runtime (HAVE_SUPERTONIC is not defined)");
+        return false;
+#endif
     }
 
     applySettingsToWorker();
     worker_->start();
 
     engineSelection_ = settings_.ttsEngine;
-    enginePiperVoice_ = settings_.piperVoice;
-    enginePiperModelPath_ = settings_.piperModelPath;
-    enginePiperConfigPath_ = settings_.piperConfigPath;
-    enginePiperSpeed_ = settings_.piperSpeed;
-    engineVoice_ = settings_.voice;
-    engineRate_ = settings_.rate;
-    enginePitch_ = settings_.pitch;
-    engineAmplitude_ = settings_.amplitude;
+    engineLocalUrl_ = settings_.localTtsUrl;
+    engineLocalVoice_ = settings_.localTtsVoice;
+    engineLocalModel_ = settings_.localTtsModel;
+    engineSupertonicVoice_ = settings_.supertonicVoice;
+    engineSupertonicModelPath_ = settings_.supertonicModelPath;
+    engineSupertonicSpeed_ = settings_.supertonicSpeed;
+    engineSupertonicSteps_ = settings_.supertonicSteps;
 
     AudioBus::instance().buffer().setVolume(static_cast<float>(settings_.volume));
     return true;
@@ -360,31 +295,38 @@ void PluginContext::installWorker(std::unique_ptr<TtsEngine> engine)
         emit logLine(QStringLiteral("tts error: ") + text);
     });
 
-    /* The emission is queued onto the UI thread (automatic connection), so the
-     * restart below never runs on the worker thread.  The requeued message is
-     * spoken by the replacement espeak engine. */
+    /* The engine reported a permanent initialization failure, requeued the
+     * current message and stopped its run loop.  There is no espeak fallback:
+     * log the reason, stop the dead worker, and retry only when the user asks
+     * for a Test Voice/connect or changes the engine. */
     connect(worker_.get(), &TtsWorker::engineUnavailable, this,
             [this](const QString &reason) {
-                forcedEspeak_ = true;
-                forcedEspeakReason_ = reason;
                 workerUnavailable_ = true;
-
-                emit logLine(QStringLiteral("tts engine: espeak-ng (fallback: ") + reason +
-                             QLatin1Char(')'));
-                QTimer::singleShot(0, this, [this]() { restartWorkerInternal(); });
+                emit logLine(QStringLiteral("tts engine unavailable: ") + reason);
+                emit logLine(QStringLiteral(
+                    "fix the Supertonic model, then click Test Voice or reconnect"));
+                QTimer::singleShot(0, this, [this]() {
+                    if (worker_) {
+                        worker_->stop();
+                        worker_.reset();
+                    }
+                    AudioBus::instance().buffer().clear();
+                    emit queueChanged();
+                });
             });
 }
 
 bool PluginContext::engineSettingsDiffer() const
 {
-    return worker_ && (settings_.ttsEngine != engineSelection_ ||
-                       settings_.piperVoice != enginePiperVoice_ ||
-                       settings_.piperModelPath != enginePiperModelPath_ ||
-                       settings_.piperConfigPath != enginePiperConfigPath_ ||
-                       settings_.piperSpeed != enginePiperSpeed_ ||
-                       settings_.voice != engineVoice_ || settings_.rate != engineRate_ ||
-                       settings_.pitch != enginePitch_ ||
-                       settings_.amplitude != engineAmplitude_);
+    return worker_ &&
+           (settings_.ttsEngine != engineSelection_ ||
+            settings_.localTtsUrl != engineLocalUrl_ ||
+            settings_.localTtsVoice != engineLocalVoice_ ||
+            settings_.localTtsModel != engineLocalModel_ ||
+            settings_.supertonicVoice != engineSupertonicVoice_ ||
+            settings_.supertonicModelPath != engineSupertonicModelPath_ ||
+            settings_.supertonicSpeed != engineSupertonicSpeed_ ||
+            settings_.supertonicSteps != engineSupertonicSteps_);
 }
 
 void PluginContext::applySettingsToWorker()
@@ -512,11 +454,9 @@ void PluginContext::clearQueue()
 
 void PluginContext::restartWorker()
 {
-    /* An explicit restart is the retry path for a Piper model that failed at
-     * runtime.  The automatic fallback uses restartWorkerInternal() directly,
-     * so it keeps forcedEspeak_ and cannot loop on the bad model. */
-    forcedEspeak_ = false;
-    forcedEspeakReason_.clear();
+    /* Explicit retry after a runtime engine failure.  Automatic recovery is
+     * gone with the espeak fallback: the next connect/Test Voice recreates the
+     * worker and retries the configured engine. */
     restartWorkerInternal();
 }
 
@@ -524,13 +464,6 @@ void PluginContext::applyLiveSettings()
 {
     queue_.setLimit(settings_.queueLimit);
     AudioBus::instance().buffer().setVolume(static_cast<float>(settings_.volume));
-
-    /* Only a changed requested engine retries Piper after a runtime fallback.
-     * Voice/rate changes preserve the forced-espeak session state. */
-    if (worker_ && settings_.ttsEngine != engineSelection_) {
-        forcedEspeak_ = false;
-        forcedEspeakReason_.clear();
-    }
 
     const bool engineChanged = engineSettingsDiffer();
 

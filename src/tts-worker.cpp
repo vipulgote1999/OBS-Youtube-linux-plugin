@@ -7,6 +7,7 @@
 
 #include "audio-buffer.hpp"
 #include "chat-message.hpp"
+#include "speech-conditioner.hpp"
 #include "text-normalizer.hpp"
 #include "tts-engine.hpp"
 #include "tts-queue.hpp"
@@ -71,8 +72,8 @@ void TtsWorker::stop()
 {
     running_.store(false);
 
-    /* cancel() is asynchronous by contract (an atomic flag in EspeakEngine),
-     * so it is safe to call from the UI thread while synthesize() runs. */
+    /* cancel() is asynchronous by contract (the engine only sets an atomic
+     * flag), so it is safe to call from the UI thread while synthesize() runs. */
     if (engine_)
         engine_->cancel();
 
@@ -123,10 +124,59 @@ void TtsWorker::run()
         speaking = true;
         emit statusChanged(QStringLiteral("speaking: ") + msg.author);
 
-        std::vector<float> pcm;
         int sampleRate = 0;
         QString error;
-        const bool synthesized = engine_->synthesize(text, &pcm, &sampleRate, &error);
+        bool synthesized = false;
+
+        if (settings.streamAudio) {
+            /* Push each synthesized sentence chunk as it arrives.  The
+             * conditioner keeps its DC-blocker state across chunks and fades
+             * only the first and last one, so chunk boundaries stay
+             * click-free. */
+            SpeechConditioner::Stream conditioner({kExpectedSampleRate});
+            bool first = true;
+            bool sinkStopped = false;
+            bool rateMismatch = false;
+
+            const auto sink = [&](const float *samples, size_t count, bool isLast) -> bool {
+                if (!running_.load()) {
+                    sinkStopped = true;
+                    return false;
+                }
+                if (sampleRate != 0 && sampleRate != kExpectedSampleRate) {
+                    rateMismatch = true;
+                    return false;
+                }
+                std::vector<float> chunk(samples, samples + count);
+                conditioner.process(&chunk, first, isLast);
+                first = false;
+                if (!chunk.empty())
+                    audio_.push(chunk.data(), chunk.size());
+                return true;
+            };
+
+            synthesized = engine_->synthesizeStreaming(text, sink, &sampleRate, &error);
+            if (sinkStopped)
+                break;
+            if (rateMismatch) {
+                emit errorOccurred(
+                    QStringLiteral("speech engine returned %1 Hz; expected %2 Hz")
+                        .arg(sampleRate)
+                        .arg(kExpectedSampleRate));
+                continue;
+            }
+        } else {
+            std::vector<float> pcm;
+            synthesized = engine_->synthesize(text, &pcm, &sampleRate, &error);
+            if (!running_.load())
+                break;
+            if (synthesized && sampleRate == kExpectedSampleRate && !pcm.empty()) {
+                SpeechConditioner::Config conditioner;
+                conditioner.sampleRate = sampleRate;
+                SpeechConditioner::process(&pcm, conditioner);
+                audio_.push(pcm.data(), pcm.size());
+            }
+        }
 
         /* A stop() during synthesis turns the engine's failure into a normal
          * shutdown; swallowing it keeps the UI free of spurious errors. */
@@ -134,10 +184,10 @@ void TtsWorker::run()
             break;
 
         if (!synthesized) {
-            /* A permanent initialization failure (for example a corrupt Piper
-             * model) will never produce audio on this engine.  Hand the current
-             * message to the replacement engine and stop this run loop instead
-             * of retrying the dead engine on every utterance. */
+            /* A permanent initialization failure (for example a corrupt Supertonic
+             * model) will never produce audio on this engine.  Requeue the current
+             * message and stop this run loop instead of retrying the dead
+             * engine on every utterance. */
             if (engine_->initializationFailed()) {
                 queue_.push(msg, 0);
                 const QString reason =
@@ -173,9 +223,6 @@ void TtsWorker::run()
          * happened meanwhile never appends stale audio. */
         if (!running_.load())
             break;
-
-        if (!pcm.empty())
-            audio_.push(pcm.data(), pcm.size());
 
         if (queue_.size() == 0) {
             speaking = false;

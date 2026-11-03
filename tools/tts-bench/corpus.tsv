@@ -1,0 +1,30 @@
+# TTS bake-off corpus. Tab separated: id <TAB> category <TAB> text
+# Categories drive the decision gates in scripts/bench-tts-host.sh:
+#   short1/short2/short3 -> live-chat messages, the disqualifying gate
+#   currency/number      -> Pocket TTS known-bad inputs (#162, #216, #234, #395)
+#   repetition           -> end-of-sentence repeat repro (#347)
+#   mixed/unicode        -> URL, emoji, mention, accents
+#   long                 -> the 200-character phrase used by piper-probe --bench
+s1_hi	short1	hi
+s1_gg	short1	gg
+s1_lol	short1	lol
+s1_no	short1	no
+s2_thanks	short2	thank you
+s2_niceshot	short2	nice shot
+s2_hello	short2	hello chat
+s3_insane	short3	that was insane
+s3_welcome	short3	welcome back streamer
+s3_question	short3	what build are you running
+cur_5	currency	Alice sent $5.00: great stream
+cur_250	currency	Bob sent $250.00: play the song
+num_year	number	I was born in 1943
+num_res	number	streaming at 1080p60
+num_price	number	it costs $19.99 on sale
+rep_hour	repetition	You don't just suddenly go from making twenty dollars an hour to making one thousand dollars an hour.
+rep_total	repetition	I said that the total was fifty five dollars and fifty five cents.
+mix_url	mixed	check this out https://example.com/clip that was crazy @streamer
+mix_punct	mixed	Wait... what?! No way!!!
+long_200	long	Live chat is busy tonight, so the plugin keeps reading every message while Piper synthesizes each sentence on the CPU and mixes the speech into OBS without blocking the interface for your live stream.
+uni_accent	unicode	He said "déjà vu" and left the café.
+uni_cjk	unicode	你好 chat, nice to see you
+punct_dash	mixed	Well — that was unexpected, wasn't it?

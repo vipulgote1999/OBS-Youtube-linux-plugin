@@ -102,7 +102,7 @@ private:
     SynthRecorder *recorder_;
 };
 
-/* Reproduces a corrupt Piper model: start-up failed permanently, so every
+/* Reproduces a corrupt Supertonic model: start-up failed permanently, so every
  * synthesize() call fails and the worker must not keep retrying it. */
 class FailedInitTtsEngine : public TtsEngine {
 public:
@@ -115,7 +115,7 @@ public:
         pcm->clear();
         *sampleRate = 0;
         if (error)
-            *error = QStringLiteral("failed to load Piper model 'bad'");
+            *error = QStringLiteral("failed to load Supertonic model 'bad'");
         return false;
     }
 
@@ -283,7 +283,7 @@ void TestTtsWorker::initializationFailureRequeuesAndStops()
      * per-utterance error. */
     QTRY_COMPARE_WITH_TIMEOUT(unavailableSpy.count(), 1, 5000);
     QCOMPARE(unavailableSpy.at(0).at(0).toString(),
-             QStringLiteral("failed to load Piper model 'bad'"));
+             QStringLiteral("failed to load Supertonic model 'bad'"));
     QCOMPARE(errorSpy.count(), 0);
 
     /* The current message is requeued for the replacement engine. */

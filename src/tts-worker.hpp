@@ -28,7 +28,7 @@ struct ChatMessage;
  *    the event loop as queued calls.
  *  - stop() sets running_ = false, cancels the engine and joins.  The 250 ms
  *    queue timeout bounds shutdown when the queue is empty; cancel() bounds it
- *    while espeak is running.  Never call stop() from the worker thread.
+ *    while the engine is running.  Never call stop() from the worker thread.
  *  - skip() drops queued messages and buffered audio, but the utterance
  *    already being synthesized may still finish and append its audio.
  */
@@ -55,7 +55,7 @@ signals:
 
     /* Emitted when the injected engine reports a permanent initialization
      * failure.  The current message has already been requeued, and the worker
-     * stops so PluginContext can replace the engine (normally with espeak). */
+     * stops so PluginContext can report the failure and retry later. */
     void engineUnavailable(const QString &reason);
 
 private:

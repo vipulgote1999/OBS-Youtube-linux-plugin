@@ -14,26 +14,42 @@ constexpr int kMaxCharsMin = 1;
 constexpr int kMaxCharsMax = 500;
 constexpr int kQueueLimitMin = 1;
 constexpr int kQueueLimitMax = 100;
-constexpr int kRateMin = 80;
-constexpr int kRateMax = 450;
-constexpr int kPitchMin = 0;
-constexpr int kPitchMax = 200;
 constexpr double kVolumeMin = 0.0;
 constexpr double kVolumeMax = 1.5;
 constexpr int kUserCooldownMin = 0;
 constexpr int kUserCooldownMax = 3600;
 constexpr int kGlobalCooldownMin = 0;
 constexpr int kGlobalCooldownMax = 60;
+constexpr double kSupertonicSpeedMin = 0.9;
+constexpr double kSupertonicSpeedMax = 1.5;
+constexpr int kSupertonicStepsMin = 4;
+constexpr int kSupertonicStepsMax = 16;
+
+QString normalizeSupertonicVoice(const QString &voice)
+{
+    static const QStringList voices = {
+        QStringLiteral("F1"), QStringLiteral("F2"), QStringLiteral("F3"),
+        QStringLiteral("F4"), QStringLiteral("F5"), QStringLiteral("M1"),
+        QStringLiteral("M2"), QStringLiteral("M3"), QStringLiteral("M4"),
+        QStringLiteral("M5"),
+    };
+    const QString candidate = voice.trimmed().toUpper();
+    return voices.contains(candidate) ? candidate : QStringLiteral("F1");
+}
 
 void clampValues(Settings *settings)
 {
     settings->maxChars = qBound(kMaxCharsMin, settings->maxChars, kMaxCharsMax);
     settings->queueLimit = qBound(kQueueLimitMin, settings->queueLimit, kQueueLimitMax);
-    settings->rate = qBound(kRateMin, settings->rate, kRateMax);
-    settings->pitch = qBound(kPitchMin, settings->pitch, kPitchMax);
-    settings->amplitude = qBound(kPitchMin, settings->amplitude, kPitchMax);
     settings->volume = qBound(kVolumeMin, settings->volume, kVolumeMax);
-    settings->piperSpeed = qBound(0.0, settings->piperSpeed, 3.0);
+    if (settings->supertonicSpeed <= 0.0)
+        settings->supertonicSpeed = 1.0;
+    settings->supertonicSpeed =
+        qBound(kSupertonicSpeedMin, settings->supertonicSpeed, kSupertonicSpeedMax);
+    settings->supertonicSteps =
+        qBound(kSupertonicStepsMin, settings->supertonicSteps, kSupertonicStepsMax);
+    settings->supertonicVoice = normalizeSupertonicVoice(settings->supertonicVoice);
+    settings->supertonicModelPath = settings->supertonicModelPath.trimmed();
     settings->userCooldownSec =
         qBound(kUserCooldownMin, settings->userCooldownSec, kUserCooldownMax);
     settings->globalCooldownSec =
@@ -45,15 +61,22 @@ void clampValues(Settings *settings)
         settings->provider = QStringLiteral("auto");
     }
 
-    /* Existing settings files predate ttsEngine; an absent or unrecognised
-     * value falls back to Piper, while an explicit espeak choice is kept. */
+    /* Existing settings files may name a removed engine.  Only "local" is a
+     * distinct choice now; every other value (including piper/espeak) uses the
+     * bundled Supertonic engine. */
     const QString engine = settings->ttsEngine.trimmed().toLower();
     settings->ttsEngine =
-        engine == QLatin1String("espeak") ? QStringLiteral("espeak") : QStringLiteral("piper");
+        engine == QLatin1String("local") ? QStringLiteral("local") : QStringLiteral("supertonic");
 
-    settings->piperVoice = settings->piperVoice.trimmed();
-    if (settings->piperVoice.isEmpty())
-        settings->piperVoice = QStringLiteral("en_US-ljspeech-medium");
+    settings->localTtsUrl = settings->localTtsUrl.trimmed();
+    if (settings->localTtsUrl.isEmpty())
+        settings->localTtsUrl = QStringLiteral("http://127.0.0.1:8765");
+    settings->localTtsVoice = settings->localTtsVoice.trimmed();
+    if (settings->localTtsVoice.isEmpty())
+        settings->localTtsVoice = QStringLiteral("af_heart");
+    settings->localTtsModel = settings->localTtsModel.trimmed();
+    if (settings->localTtsModel.isEmpty())
+        settings->localTtsModel = QStringLiteral("tts-1");
 }
 
 QString configFilePath()
@@ -111,15 +134,16 @@ Settings Settings::fromObsData(obs_data_t *data)
     settings.provider = readString("provider", settings.provider);
     settings.apiKey = readString("apiKey", settings.apiKey);
     settings.videoUrl = readString("videoUrl", settings.videoUrl);
-    settings.voice = readString("voice", settings.voice);
     settings.ttsEngine = readString("ttsEngine", settings.ttsEngine);
-    settings.piperVoice = readString("piperVoice", settings.piperVoice);
-    settings.piperModelPath = readString("piperModelPath", settings.piperModelPath);
-    settings.piperConfigPath = readString("piperConfigPath", settings.piperConfigPath);
-    settings.piperSpeed = readDouble("piperSpeed", settings.piperSpeed);
-    settings.rate = readInt("rate", settings.rate);
-    settings.pitch = readInt("pitch", settings.pitch);
-    settings.amplitude = readInt("amplitude", settings.amplitude);
+    settings.supertonicVoice = readString("supertonicVoice", settings.supertonicVoice);
+    settings.supertonicModelPath =
+        readString("supertonicModelPath", settings.supertonicModelPath);
+    settings.supertonicSpeed = readDouble("supertonicSpeed", settings.supertonicSpeed);
+    settings.supertonicSteps = readInt("supertonicSteps", settings.supertonicSteps);
+    settings.streamAudio = readBool("streamAudio", settings.streamAudio);
+    settings.localTtsUrl = readString("localTtsUrl", settings.localTtsUrl);
+    settings.localTtsVoice = readString("localTtsVoice", settings.localTtsVoice);
+    settings.localTtsModel = readString("localTtsModel", settings.localTtsModel);
     settings.volume = readDouble("volume", settings.volume);
     settings.readAuthor = readBool("readAuthor", settings.readAuthor);
     settings.authorTemplate = readString("authorTemplate", settings.authorTemplate);
@@ -137,7 +161,6 @@ Settings Settings::fromObsData(obs_data_t *data)
     settings.readModerators = readBool("readModerators", settings.readModerators);
     settings.autoConnect = readBool("autoConnect", settings.autoConnect);
     settings.helperPath = readString("helperPath", settings.helperPath);
-    settings.espeakPath = readString("espeakPath", settings.espeakPath);
 
     clampValues(&settings);
     return settings;
@@ -149,15 +172,15 @@ obs_data_t *Settings::toObsData() const
     obs_data_set_string(data, "provider", provider.toUtf8().constData());
     obs_data_set_string(data, "apiKey", apiKey.toUtf8().constData());
     obs_data_set_string(data, "videoUrl", videoUrl.toUtf8().constData());
-    obs_data_set_string(data, "voice", voice.toUtf8().constData());
     obs_data_set_string(data, "ttsEngine", ttsEngine.toUtf8().constData());
-    obs_data_set_string(data, "piperVoice", piperVoice.toUtf8().constData());
-    obs_data_set_string(data, "piperModelPath", piperModelPath.toUtf8().constData());
-    obs_data_set_string(data, "piperConfigPath", piperConfigPath.toUtf8().constData());
-    obs_data_set_double(data, "piperSpeed", piperSpeed);
-    obs_data_set_int(data, "rate", rate);
-    obs_data_set_int(data, "pitch", pitch);
-    obs_data_set_int(data, "amplitude", amplitude);
+    obs_data_set_string(data, "supertonicVoice", supertonicVoice.toUtf8().constData());
+    obs_data_set_string(data, "supertonicModelPath", supertonicModelPath.toUtf8().constData());
+    obs_data_set_double(data, "supertonicSpeed", supertonicSpeed);
+    obs_data_set_int(data, "supertonicSteps", supertonicSteps);
+    obs_data_set_bool(data, "streamAudio", streamAudio);
+    obs_data_set_string(data, "localTtsUrl", localTtsUrl.toUtf8().constData());
+    obs_data_set_string(data, "localTtsVoice", localTtsVoice.toUtf8().constData());
+    obs_data_set_string(data, "localTtsModel", localTtsModel.toUtf8().constData());
     obs_data_set_double(data, "volume", volume);
     obs_data_set_bool(data, "readAuthor", readAuthor);
     obs_data_set_string(data, "authorTemplate", authorTemplate.toUtf8().constData());
@@ -175,7 +198,6 @@ obs_data_t *Settings::toObsData() const
     obs_data_set_bool(data, "readModerators", readModerators);
     obs_data_set_bool(data, "autoConnect", autoConnect);
     obs_data_set_string(data, "helperPath", helperPath.toUtf8().constData());
-    obs_data_set_string(data, "espeakPath", espeakPath.toUtf8().constData());
     return data;
 }
 
@@ -279,15 +301,6 @@ Settings Settings::loadFromFile(const QString &path, QString *error)
     settings = fromObsData(data);
     obs_data_release(data);
     return settings;
-}
-
-TtsBackend chooseTtsBackend(const Settings &settings, bool piperModelPresent)
-{
-    if (settings.ttsEngine.trimmed().compare(QLatin1String("espeak"), Qt::CaseInsensitive) == 0)
-        return TtsBackend::Espeak;
-    if (!piperModelPresent)
-        return TtsBackend::Espeak;
-    return TtsBackend::Piper;
 }
 
 ChatConfig Settings::toChatConfig() const
