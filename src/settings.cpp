@@ -24,8 +24,8 @@ constexpr int kUserCooldownMin = 0;
 constexpr int kUserCooldownMax = 3600;
 constexpr int kGlobalCooldownMin = 0;
 constexpr int kGlobalCooldownMax = 60;
-constexpr double kSupertonicSpeedMin = 0.5;
-constexpr double kSupertonicSpeedMax = 2.0;
+constexpr double kSupertonicSpeedMin = 0.9;
+constexpr double kSupertonicSpeedMax = 1.5;
 constexpr int kSupertonicStepsMin = 4;
 constexpr int kSupertonicStepsMax = 16;
 

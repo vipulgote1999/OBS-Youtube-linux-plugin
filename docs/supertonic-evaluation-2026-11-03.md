@@ -15,6 +15,48 @@ handling need more listening and real-chat evidence first.
 Piper remains the default. Supertonic's settings default to `F1`, 8 denoising
 steps and `1.00×`; 4 steps is the faster option for evaluation.
 
+## OBS playback speed: duplicate source consumers (fixed)
+
+The reported "sped up" audio was not the model or the 44.1→22.05 kHz
+resampler. The scene collection contained four `YouTube Chat TTS` sources
+(`YouTube Chat TTS`, `2`, `3`, `4`), and every source instance started its
+own feeder thread that popped from the process-wide `AudioBus`. Only one
+source was in the active scene, but all four feeders still consumed the
+buffer, draining speech about 4× faster than real time. The active source
+received every fourth chunk, which sounded fast, choppy and partly
+unintelligible; the user's saved `supertonicSpeed: 0.5` was a workaround for
+that drain.
+
+`fix: drain tts audio from only one active obs source` adds an
+`AudioConsumerArbiter`: the first activated source is the only consumer,
+duplicate/inactive sources emit silence, and deactivation or destruction
+hands the buffer to another active source. With the other mixer inputs muted,
+a speed-0.5 test message now occupies the expected ~6–8 s instead of the ~2 s
+produced by four consumers. The module logs the winning source by name and a
+warning for each duplicate that stays silent.
+
+## Post-review tuning: speed and amplitude
+
+Muse Spark 1.3 reviewed a spectrogram and waveform of the OBS capture (it
+could not receive the WAV through this harness, so the review was visual;
+this is stated explicitly rather than pretending it heard the audio). Its
+findings matched the measurements:
+
+- At `0.5×` the sample is unnaturally slow: ~9.5 s for a 12-word sentence,
+  with ~1 s and ~1.4 s mid-utterance gaps.
+- No clipping was visible in the OBS capture; peaks were tapered, not
+  flat-topped.
+- Recommendation: use `0.9–1.0×` for normal chat, not `0.5×`; keep OBS peaks
+  around −12 to −6 dBFS and leave headroom.
+
+Consequently the settings and dock now clamp Supertonic speed to **0.9–1.5**
+(the model's documented natural range) instead of 0.5–2.0. A saved `0.5` is
+migrated to `0.9` on load. The engine API still accepts 0.5–2.0 so the
+packaging probe can exercise the wider range. The default remains `1.0`;
+`0.9` is the slightly more deliberate chat setting. No amplitude DSP was
+added: the observed capture did not clip, and hard limiting would change the
+voice more than it would help.
+
 ## Method
 
 `supertonic-probe --corpus tools/tts-bench/corpus.tsv` ran all 23 rows in one

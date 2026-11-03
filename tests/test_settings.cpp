@@ -224,8 +224,16 @@ void TestSettings::clampsSupertonicControls()
     const Settings tooHigh = Settings::fromObsData(data);
     obs_data_release(data);
 
-    QCOMPARE(tooHigh.supertonicSpeed, 2.0);
+    QCOMPARE(tooHigh.supertonicSpeed, 1.5);
     QCOMPARE(tooHigh.supertonicSteps, 16);
+
+    data = obs_data_create();
+    obs_data_set_double(data, "supertonicSpeed", 0.5);
+    obs_data_set_int(data, "supertonicSteps", 4);
+    const Settings belowNatural = Settings::fromObsData(data);
+    obs_data_release(data);
+
+    QCOMPARE(belowNatural.supertonicSpeed, 0.9);
 
     data = obs_data_create();
     obs_data_set_double(data, "supertonicSpeed", 0.0);
@@ -259,7 +267,7 @@ void TestSettings::dockFacingSettingsRoundTripThroughFile()
     original.piperSpeed = 0.8;
     original.supertonicVoice = QStringLiteral("F2");
     original.supertonicModelPath = QStringLiteral("/tmp/supertonic");
-    original.supertonicSpeed = 0.85;
+    original.supertonicSpeed = 1.25;
     original.supertonicSteps = 10;
     original.rate = 220;
     original.pitch = 70;

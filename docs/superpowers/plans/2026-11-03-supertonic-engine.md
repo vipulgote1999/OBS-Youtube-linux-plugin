@@ -17,7 +17,8 @@
 - Do not remove Piper or espeak-ng in this change.
 - No Python, no nlohmann/json, no OpenMP in the shipped engine.
 - ONNX Runtime intra-op threads: `qBound(1, QThread::idealThreadCount() / 2, 4)`; inter-op 1.
-- Speed clamp 0.5–2.0; steps clamp 4–16; defaults 1.0 and 8.
+- Speed clamp 0.5–2.0 in the engine API (settings/UI clamp 0.9–1.5 after the
+  listening review); steps clamp 4–16; defaults 1.0 and 8.
 - Default voice `F1`; all ten voices bundled.
 - Model license (OpenRAIL-M) ships with the extension and is recorded in `THIRD_PARTY_NOTICES.md`.
 - Every Flatpak model source is pinned by SHA-256.

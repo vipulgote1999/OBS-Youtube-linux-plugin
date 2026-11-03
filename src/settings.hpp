@@ -31,6 +31,7 @@ struct Settings {
      * unpacked model directory. */
     QString supertonicVoice = QStringLiteral("F1");
     QString supertonicModelPath;
+    /* 0.9-1.5 is the model's natural range; lower values add long pauses. */
     double supertonicSpeed = 1.0;
     int supertonicSteps = 8;
     /* Stream Piper chunks to the audio buffer as they arrive instead of

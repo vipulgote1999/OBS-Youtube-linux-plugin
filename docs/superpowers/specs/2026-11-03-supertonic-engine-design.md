@@ -89,7 +89,10 @@ installed with the extension and added to `THIRD_PARTY_NOTICES.md`.
 
 - `ttsEngine = "supertonic"` selects the engine.
 - `supertonicVoice` — one of the ten built-in voices; default `F1`.
-- `supertonicSpeed` — playback multiplier; default `1.0`, clamped 0.5–2.0.
+- `supertonicSpeed` — playback multiplier; default `1.0`. The engine API
+  accepts 0.5–2.0, but the settings and dock clamp to the model's natural
+  0.9–1.5 range; below 0.9 the model inserts long pauses instead of slowing
+  the words proportionally.
 - `supertonicSteps` — denoising steps; default `8`, clamped 4–16.
 - `supertonicModelPath` — development override; empty means the bundled path.
 

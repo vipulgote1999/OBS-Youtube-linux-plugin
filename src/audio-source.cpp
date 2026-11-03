@@ -133,13 +133,15 @@ void audio_source_activate(void *ptr)
         return;
 
     data->active.store(true, std::memory_order_relaxed);
+    const char *name = data->source ? obs_source_get_name(data->source) : "unknown";
     if (consumerArbiter.tryAcquire(data)) {
-        blog(LOG_INFO, "[%s] audio source is the active TTS consumer", PLUGIN_NAME);
+        blog(LOG_INFO, "[%s] audio source '%s' is the active TTS consumer", PLUGIN_NAME,
+             name);
     } else {
         blog(LOG_WARNING,
-             "[%s] another YouTube Chat TTS source is already active; this source "
-             "will stay silent",
-             PLUGIN_NAME);
+             "[%s] another YouTube Chat TTS source is already active; '%s' will stay "
+             "silent",
+             PLUGIN_NAME, name);
     }
 }
 

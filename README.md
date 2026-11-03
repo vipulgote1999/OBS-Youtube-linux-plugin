@@ -308,8 +308,10 @@ How the controls apply:
   a "low quality" first impression. A saved `0.00` is migrated to `1.00` when
   settings load, because `0.00` stretched the voice to one-third speed. The
   default espeak **Rate** is 165. Supertonic has its own **Speed** slider
-  (0.50–2.00×) and a **Denoising steps** control (4–16; 8 is the default,
-  higher is slower and often cleaner).
+  (0.90–1.50×) and a **Denoising steps** control (4–16; 8 is the default,
+  higher is slower and often cleaner). The 0.90–1.50 range is the model's
+  natural conversational range; lower values spend the extra duration on
+  silence rather than slower words.
 - **Pitch** and **Amplitude** are espeak-only. They are disabled (greyed) for
   Piper, Supertonic and the local server with an explanatory tooltip.
 - **Low-latency streaming** applies to Piper and Supertonic. Each engine emits

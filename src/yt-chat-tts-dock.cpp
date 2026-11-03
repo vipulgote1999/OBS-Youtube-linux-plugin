@@ -295,11 +295,12 @@ YtChatTtsDock::YtChatTtsDock(PluginContext *context, QWidget *parent)
                              speedValueLabel_);
 
     supertonicSpeedSlider_ = new QSlider(Qt::Horizontal, voiceGroup);
-    supertonicSpeedSlider_->setRange(50, 200);
+    supertonicSpeedSlider_->setRange(90, 150);
     supertonicSpeedSlider_->setSingleStep(5);
     supertonicSpeedSlider_->setToolTip(
         uiText("Voice.SupertonicSpeedTooltip",
-               "1.00× is the model's natural pace; 0.50×–2.00× are supported."));
+               "0.90× is the natural conversational pace; 1.50× is the fastest "
+               "recommended. Values below 0.90× add long pauses."));
     supertonicSpeedValueLabel_ = new QLabel(voiceGroup);
     supertonicSpeedRow_ =
         addSliderRow(voiceForm, uiText("Voice.Speed", "Speed"), supertonicSpeedSlider_,
