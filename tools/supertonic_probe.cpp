@@ -257,8 +257,18 @@ int main(int argc, char **argv)
                 modelDir.toUtf8().constData(), QFileInfo(voicePath).fileName().toUtf8().constData(),
                 steps, speed);
 
-    if (!corpusPath.isEmpty())
-        return runCorpus(&engine, corpusPath, steps, speed);
+    if (!corpusPath.isEmpty()) {
+        const auto start = std::chrono::steady_clock::now();
+        const int rc = runCorpus(&engine, corpusPath, steps, speed);
+        const qint64 elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                     std::chrono::steady_clock::now() - start)
+                                     .count();
+        if (rc != 0)
+            return rc;
+        std::printf("corpus_total_ms=%lld\n", static_cast<long long>(elapsedMs));
+        std::printf("peak_rss_mb=%.1f\n", peakRssMb());
+        return 0;
+    }
 
     /* The first synthesis loads the model, so it is reported separately from
      * the steady-state benchmark runs. */

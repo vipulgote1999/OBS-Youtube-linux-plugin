@@ -252,6 +252,28 @@ Only the LJSpeech Piper voice is bundled. The commonly suggested
 dataset license is research-only and cannot be redistributed in a public
 release. `en_US-ryan-high` is CC BY-NC-SA and is also excluded.
 
+### Supertonic 3 performance
+
+Measured on the reference laptop (i5-13450HX, 16 threads, 4 ONNX Runtime
+intra-op threads, 4 or 8 denoising steps, `F1` voice):
+
+| measurement | 4 steps | 8 steps |
+|---|---:|---:|
+| First synthesis (includes model load) | 0.82–0.94 s | 1.01–1.06 s |
+| Warm 2–3 word message | 0.26–0.33 s | 0.42–0.58 s |
+| 200-character message | 1.92 s | 3.30 s |
+| Peak RSS | 656 MB | 657 MB |
+
+A warm short message also carries ~0.4 s of leading and ~0.6 s of trailing
+silence, so rapid one-word chat has a higher perceived latency than Piper.
+Long messages are faster in wall time than the shipped Piper voice because
+Supertonic generates 14.4 s of audio for the 200-character phrase where Piper
+generates 31.7 s. Number/currency symbols and CJK text are unreliable without
+a language/number normalizer, so Supertonic remains experimental and Piper
+stays the default. Full numbers, the ASR spot-check and the blind listening
+page are in
+[`docs/supertonic-evaluation-2026-11-03.md`](docs/supertonic-evaluation-2026-11-03.md).
+
 ### Local server (Kokoro / Pocket TTS)
 
 The local engine is the quality path. Kokoro and Pocket TTS sound considerably
