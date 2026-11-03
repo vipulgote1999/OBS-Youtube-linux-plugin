@@ -12,3 +12,7 @@ dist/
 
 # Agent planning scratch space (not part of the product)
 .superpowers/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
