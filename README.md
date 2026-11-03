@@ -122,6 +122,7 @@ SHA-256 for the bundle:
 ./scripts/smoke-flatpak.sh     # checks the installed extension inside the sandbox
 ./scripts/test-espeak-flatpak.sh
 ./scripts/test-piper-flatpak.sh # Piper synthesis, 200-character latency, fallback probes
+./scripts/test-supertonic-flatpak.sh # Supertonic synthesis, benchmark, cancellation
 ```
 
 `build-flatpak.sh` refuses to start the Flatpak build if `dist/ytchat-helper`
@@ -138,20 +139,24 @@ rm -rf build build-flatpak dist
 ./scripts/smoke-flatpak.sh
 ./scripts/test-espeak-flatpak.sh
 ./scripts/test-piper-flatpak.sh
+./scripts/test-supertonic-flatpak.sh
 ./scripts/test-host.sh
 ```
 
 `smoke-flatpak.sh` verifies, inside the OBS sandbox, that the module and
 locale, the executable helper (`ytchat-helper --version`), the espeak-ng
 binary and data, libpiper/ONNX Runtime, the LJSpeech model and config, the
-AppStream metainfo and the license/notice files are all present, that the
-module actually links the bundled Piper runtime, and that no installed binary
-has a missing shared library. `test-espeak-flatpak.sh` synthesizes speech to a
-WAV and checks its RIFF header. `test-piper-flatpak.sh` synthesizes through the
-raw C API and the shipped engine, runs a deterministic 200-character phrase
-three times, reports first and steady-state timings (the best steady-state run
-must be under 1.5 s on the reference CPU), and checks the cancellation and
-missing-config error paths.
+Supertonic 3 model with all ten voice styles, the AppStream metainfo and the
+license/notice files are all present, that the module actually links the
+bundled Piper/ONNX runtime, and that no installed binary has a missing shared
+library. `test-espeak-flatpak.sh` synthesizes speech to a WAV and checks its
+RIFF header. `test-piper-flatpak.sh` synthesizes through the raw C API and the
+shipped engine, runs a deterministic 200-character phrase three times, reports
+first and steady-state timings (the best steady-state run must be under 1.5 s
+on the reference CPU), and checks the cancellation and missing-config error
+paths. `test-supertonic-flatpak.sh` synthesizes through `SupertonicEngine`,
+runs the same 200-character phrase at four denoising steps, and checks the
+cancellation and missing-model error paths.
 
 After installing or rebuilding the extension, **restart OBS** (or use
 *File → Exit* and start it again): a running instance keeps the extension it

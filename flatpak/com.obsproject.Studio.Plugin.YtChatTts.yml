@@ -203,6 +203,7 @@ modules:
       - -DCMAKE_PREFIX_PATH=/app
       - -DBUILD_TESTING=OFF
       - -DBUILD_PIPER_PROBE=ON
+      - -DBUILD_SUPERTONIC_PROBE=ON
       - -DPIPER_ROOT=/app/plugins/YtChatTts
       - -DONNXRUNTIME_ROOT=/app/plugins/YtChatTts
     post-install:

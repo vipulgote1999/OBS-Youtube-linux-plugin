@@ -202,6 +202,48 @@ if(BUILD_PIPER_PROBE)
     )
 endif()
 
+# Packaging probe for the bundled Supertonic 3 model.  It exercises the same
+# LibSupertonicApi/SupertonicEngine path the plugin uses, including the
+# 44,100 -> 22,050 Hz conversion, so a packaging regression is visible without
+# opening the OBS UI.
+option(BUILD_SUPERTONIC_PROBE "Build the Flatpak Supertonic probe" OFF)
+
+if(BUILD_SUPERTONIC_PROBE)
+    if(NOT YTCHAT_SUPERTONIC_AVAILABLE)
+        message(FATAL_ERROR
+            "BUILD_SUPERTONIC_PROBE requires ONNX Runtime; "
+            "set -DONNXRUNTIME_ROOT=<prefix>")
+    endif()
+
+    get_filename_component(ONNXRUNTIME_LIBRARY_DIR "${ONNXRUNTIME_LIBRARY}" DIRECTORY)
+
+    add_executable(supertonic_probe
+        tools/supertonic_probe.cpp
+        src/libsupertonic-api.cpp
+        src/supertonic-text.cpp
+        src/supertonic-engine.cpp
+        src/audio-resampler.cpp
+    )
+    set_target_properties(supertonic_probe PROPERTIES
+        OUTPUT_NAME supertonic-probe
+        # Same install location and relative library directory as piper-probe.
+        INSTALL_RPATH "$ORIGIN/../../../../../lib"
+        BUILD_RPATH "${ONNXRUNTIME_LIBRARY_DIR}"
+    )
+    target_include_directories(supertonic_probe PRIVATE
+        src
+        "${ONNXRUNTIME_INCLUDE_DIR}"
+    )
+    target_link_libraries(supertonic_probe PRIVATE
+        Qt6::Core
+        "${ONNXRUNTIME_LIBRARY}"
+    )
+
+    install(TARGETS supertonic_probe
+        RUNTIME DESTINATION share/obs/obs-plugins/yt-chat-tts/bin
+    )
+endif()
+
 include(CTest)
 if(BUILD_TESTING)
     find_package(Qt6 REQUIRED COMPONENTS Test)
