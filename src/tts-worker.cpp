@@ -129,9 +129,10 @@ void TtsWorker::run()
         bool synthesized = false;
 
         if (settings.streamAudio) {
-            /* Push each Piper chunk as it arrives.  The conditioner keeps its
-             * DC-blocker state across chunks and fades only the first and last
-             * one, so chunk boundaries stay click-free. */
+            /* Push each synthesized sentence chunk as it arrives.  The
+             * conditioner keeps its DC-blocker state across chunks and fades
+             * only the first and last one, so chunk boundaries stay
+             * click-free. */
             SpeechConditioner::Stream conditioner({kExpectedSampleRate});
             bool first = true;
             bool sinkStopped = false;

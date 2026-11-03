@@ -1,8 +1,10 @@
 #include "plugin-context.hpp"
 
 #include <QDateTime>
+#include <QDir>
 #include <QFileInfo>
 #include <QStringList>
+#include <QThread>
 #include <QTimer>
 
 #include <algorithm>
@@ -22,8 +24,14 @@
 #include "piper-engine.hpp"
 #endif
 
+#ifdef HAVE_SUPERTONIC
+#include "libsupertonic-api.hpp"
+#include "supertonic-engine.hpp"
+#endif
+
 namespace {
 constexpr char kDefaultPiperVoice[] = "en_US-ljspeech-medium";
+constexpr char kDefaultSupertonicVoice[] = "F1";
 
 QString formatMessage(const ChatMessage &msg)
 {
@@ -134,6 +142,107 @@ PiperResources resolvePiperResources(const Settings &settings)
     return resources;
 }
 
+QString supertonicRuntimeProblem()
+{
+#ifdef HAVE_SUPERTONIC
+    return {};
+#else
+    /* Same packaging-integrity rule as Piper: a host build without ONNX
+     * Runtime speaks through espeak-ng instead of silently going mute. */
+    return QStringLiteral(
+        "this build has no ONNX Runtime (HAVE_SUPERTONIC is not defined)");
+#endif
+}
+
+QString supertonicVoiceOrDefault(const Settings &settings)
+{
+    static const QStringList voices = {
+        QStringLiteral("F1"), QStringLiteral("F2"), QStringLiteral("F3"),
+        QStringLiteral("F4"), QStringLiteral("F5"), QStringLiteral("M1"),
+        QStringLiteral("M2"), QStringLiteral("M3"), QStringLiteral("M4"),
+        QStringLiteral("M5"),
+    };
+    const QString voice = settings.supertonicVoice.trimmed().toUpper();
+    return voices.contains(voice) ? voice : QString::fromLatin1(kDefaultSupertonicVoice);
+}
+
+struct SupertonicResources {
+    QString modelDir;
+    QString voicePath;
+    /* Empty when the requested Supertonic engine can be created; otherwise each
+     * entry explains one missing resource/runtime in user-facing terms. */
+    QStringList problems;
+};
+
+/* Resolves the bundled model and the selected voice style.  The model layout is
+ * documented in docs/superpowers/specs/2026-11-03-supertonic-engine-design.md:
+ * <modelDir>/onnx/*.onnx plus <modelDir>/voice_styles/<voice>.json. */
+SupertonicResources resolveSupertonicResources(const Settings &settings)
+{
+    SupertonicResources resources;
+
+    const QString configuredModel = settings.supertonicModelPath.trimmed();
+    if (!configuredModel.isEmpty()) {
+        if (QFileInfo(configuredModel).isDir()) {
+            resources.modelDir = configuredModel;
+        } else {
+            resources.problems.append(QStringLiteral("supertonic model does not exist: ") +
+                                      configuredModel);
+        }
+    } else {
+        resources.modelDir = resolveBundledPath(QStringLiteral("supertonic"));
+        if (resources.modelDir.isEmpty()) {
+            resources.problems.append(
+                QStringLiteral("supertonic model not found; looked for: ") +
+                bundledPathCandidates(QStringLiteral("supertonic"))
+                    .join(QStringLiteral(", ")));
+        }
+    }
+
+    if (!resources.modelDir.isEmpty()) {
+        /* Accept either the package directory (with onnx/) or the onnx
+         * directory itself, matching LibSupertonicApi's resolution. */
+        const QString nestedOnnx = QDir(resources.modelDir).filePath(QStringLiteral("onnx"));
+        const QString onnxDir =
+            QFileInfo(nestedOnnx).isDir() ? nestedOnnx : resources.modelDir;
+        const QStringList required = {
+            QStringLiteral("duration_predictor.onnx"),
+            QStringLiteral("text_encoder.onnx"),
+            QStringLiteral("vector_estimator.onnx"),
+            QStringLiteral("vocoder.onnx"),
+            QStringLiteral("tts.json"),
+            QStringLiteral("unicode_indexer.json"),
+        };
+        for (const QString &file : required) {
+            const QString path = QDir(onnxDir).filePath(file);
+            if (!QFileInfo(path).isFile())
+                resources.problems.append(QStringLiteral("supertonic model file missing: ") +
+                                          path);
+        }
+
+        const QString voice = supertonicVoiceOrDefault(settings);
+        const QString packageVoice =
+            QDir(resources.modelDir)
+                .filePath(QStringLiteral("voice_styles/") + voice + QStringLiteral(".json"));
+        const QString parentVoice =
+            QDir(resources.modelDir)
+                .filePath(QStringLiteral("../voice_styles/") + voice + QStringLiteral(".json"));
+        if (QFileInfo(packageVoice).isFile())
+            resources.voicePath = packageVoice;
+        else if (QFileInfo(parentVoice).isFile())
+            resources.voicePath = QFileInfo(parentVoice).canonicalFilePath();
+        else
+            resources.problems.append(QStringLiteral("supertonic voice not found: ") +
+                                      packageVoice);
+    }
+
+    const QString runtimeProblem = supertonicRuntimeProblem();
+    if (!runtimeProblem.isEmpty())
+        resources.problems.append(runtimeProblem);
+
+    return resources;
+}
+
 struct EspeakSelection {
     std::unique_ptr<TtsEngine> engine;
     QString binaryPath;
@@ -236,27 +345,33 @@ bool PluginContext::ensureWorker(QString *error)
 
     const bool piperRequested =
         settings_.ttsEngine.trimmed().compare(QLatin1String("piper"), Qt::CaseInsensitive) == 0;
+    const bool supertonicRequested = settings_.ttsEngine.trimmed().compare(
+                                         QLatin1String("supertonic"), Qt::CaseInsensitive) == 0;
     TtsBackend backend = TtsBackend::Espeak;
     QString fallbackReason;
     PiperResources piper;
+    SupertonicResources supertonic;
 
     if (forcedEspeak_) {
-        /* A Piper engine already failed to initialize in this session.  Keep
+        /* An engine already failed to initialize in this session.  Keep
          * speaking through espeak until the user changes the engine or asks
          * for an explicit restart. */
         fallbackReason = forcedEspeakReason_.isEmpty()
-                             ? QStringLiteral("piper could not initialize")
+                             ? QStringLiteral("the selected engine could not initialize")
                              : forcedEspeakReason_;
     } else {
         piper = resolvePiperResources(settings_);
-        /* Supertonic resource detection is wired in the next change; until
-         * then a hand-edited supertonic selection speaks through espeak. */
-        backend = chooseTtsBackend(settings_, !piper.modelPath.isEmpty(), false);
+        supertonic = resolveSupertonicResources(settings_);
+        const bool supertonicUsable =
+            !supertonic.modelDir.isEmpty() && !supertonic.voicePath.isEmpty() &&
+            supertonic.problems.isEmpty();
+        backend = chooseTtsBackend(settings_, !piper.modelPath.isEmpty(), supertonicUsable);
 
-        /* A requested Piper engine that cannot be created must never go
-         * silent: speak through espeak-ng and log the exact missing
-         * resource/runtime. */
+        /* A requested engine that cannot be created must never go silent:
+         * speak through espeak-ng and log the exact missing resource/runtime. */
         if (backend == TtsBackend::Piper && !piper.problems.isEmpty())
+            backend = TtsBackend::Espeak;
+        if (backend == TtsBackend::Supertonic && !supertonicUsable)
             backend = TtsBackend::Espeak;
     }
 
@@ -292,6 +407,33 @@ bool PluginContext::ensureWorker(QString *error)
         emit logLine(QStringLiteral("local tts voice: ") + settings_.localTtsVoice);
     }
 
+    if (backend == TtsBackend::Supertonic) {
+#ifdef HAVE_SUPERTONIC
+        const QString voice = supertonicVoiceOrDefault(settings_);
+        /* Leave OBS room to render: half the cores, never more than four. */
+        const int threads = qBound(1, QThread::idealThreadCount() / 2, 4);
+        auto api = std::make_unique<LibSupertonicApi>(supertonic.modelDir,
+                                                      supertonic.voicePath,
+                                                      QStringLiteral("en"), threads);
+        auto engine = std::make_unique<SupertonicEngine>(std::move(api));
+        engine->setSpeed(static_cast<float>(settings_.supertonicSpeed));
+        engine->setSteps(settings_.supertonicSteps);
+        installWorker(std::move(engine));
+
+        /* Loading is lazy: a corrupt model is detected on the worker's first
+         * synth, where engineUnavailable() triggers the espeak fallback. */
+        emit logLine(QStringLiteral("tts engine: supertonic (") + voice + QLatin1Char(')'));
+        emit logLine(QStringLiteral("supertonic model: ") + supertonic.modelDir);
+        emit logLine(QStringLiteral("supertonic voice: ") + supertonic.voicePath);
+        emit logLine(QStringLiteral("supertonic steps: ") +
+                     QString::number(settings_.supertonicSteps));
+#else
+        // Unreachable: supertonicRuntimeProblem() adds a problem above, but
+        // keep a defensive fallback in case that check ever changes.
+        backend = TtsBackend::Espeak;
+#endif
+    }
+
     if (backend == TtsBackend::Espeak) {
         QString reason = fallbackReason;
         if (reason.isEmpty() && piperRequested) {
@@ -299,13 +441,18 @@ bool PluginContext::ensureWorker(QString *error)
                          ? QStringLiteral("piper runtime is unavailable")
                          : piper.problems.join(QStringLiteral("; "));
         }
+        if (reason.isEmpty() && supertonicRequested) {
+            reason = supertonic.problems.isEmpty()
+                         ? QStringLiteral("supertonic runtime is unavailable")
+                         : supertonic.problems.join(QStringLiteral("; "));
+        }
 
         EspeakSelection espeak;
         if (!createEspeakEngine(settings_, &espeak, error))
             return false;
 
         /* Only claim espeak-ng is active after it actually constructed. */
-        if (piperRequested && !reason.isEmpty()) {
+        if ((piperRequested || supertonicRequested) && !reason.isEmpty()) {
             emit logLine(QStringLiteral("tts engine: espeak-ng (fallback: ") + reason +
                          QLatin1Char(')'));
         } else {
@@ -330,6 +477,10 @@ bool PluginContext::ensureWorker(QString *error)
     enginePiperModelPath_ = settings_.piperModelPath;
     enginePiperConfigPath_ = settings_.piperConfigPath;
     enginePiperSpeed_ = settings_.piperSpeed;
+    engineSupertonicVoice_ = settings_.supertonicVoice;
+    engineSupertonicModelPath_ = settings_.supertonicModelPath;
+    engineSupertonicSpeed_ = settings_.supertonicSpeed;
+    engineSupertonicSteps_ = settings_.supertonicSteps;
     engineVoice_ = settings_.voice;
     engineRate_ = settings_.rate;
     enginePitch_ = settings_.pitch;
@@ -400,6 +551,10 @@ bool PluginContext::engineSettingsDiffer() const
                        settings_.piperModelPath != enginePiperModelPath_ ||
                        settings_.piperConfigPath != enginePiperConfigPath_ ||
                        settings_.piperSpeed != enginePiperSpeed_ ||
+                       settings_.supertonicVoice != engineSupertonicVoice_ ||
+                       settings_.supertonicModelPath != engineSupertonicModelPath_ ||
+                       settings_.supertonicSpeed != engineSupertonicSpeed_ ||
+                       settings_.supertonicSteps != engineSupertonicSteps_ ||
                        settings_.voice != engineVoice_ || settings_.rate != engineRate_ ||
                        settings_.pitch != enginePitch_ ||
                        settings_.amplitude != engineAmplitude_);
@@ -543,8 +698,8 @@ void PluginContext::applyLiveSettings()
     queue_.setLimit(settings_.queueLimit);
     AudioBus::instance().buffer().setVolume(static_cast<float>(settings_.volume));
 
-    /* Only a changed requested engine retries Piper after a runtime fallback.
-     * Voice/rate changes preserve the forced-espeak session state. */
+    /* Only a changed requested engine retries a failed engine after a runtime
+     * fallback.  Voice/rate changes preserve the forced-espeak session state. */
     if (worker_ && settings_.ttsEngine != engineSelection_) {
         forcedEspeak_ = false;
         forcedEspeakReason_.clear();
