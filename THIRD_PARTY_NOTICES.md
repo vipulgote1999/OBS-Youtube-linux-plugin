@@ -99,7 +99,9 @@ dataset license is research-only and is not suitable for a public release.
   pins every file by SHA-256.
 - Upstream inference code: <https://github.com/supertone-oss-archive/supertonic>
   (MIT). The plugin ports that archived C++ inference path; no Python or
-  network service is used at runtime.
+  network service is used at runtime. The upstream MIT license and
+  `Copyright (c) 2025 Supertone Inc.` notice are reproduced verbatim in
+  [`LICENSES/supertonic/LICENSE`](LICENSES/supertonic/LICENSE).
 - Installed under
   `/app/plugins/YtChatTts/share/obs/obs-plugins/yt-chat-tts/supertonic/`.
 - Open RAIL-M use-based restrictions apply to the model and its outputs; the

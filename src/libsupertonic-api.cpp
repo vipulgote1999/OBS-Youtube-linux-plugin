@@ -29,6 +29,7 @@ namespace {
 constexpr int kSilenceMs = 300;
 constexpr int kMaxChunkLength = 300;
 constexpr int kMaxShortLanguageChunkLength = 120;
+constexpr int kExpectedModelSampleRate = 44100;
 
 struct ModelConfig {
     int sampleRate = 0;
@@ -262,6 +263,14 @@ struct LibSupertonicApi::Impl {
 
             if (!loadModelConfig(onnxDir, &config, error))
                 return failLoad(error);
+            if (config.sampleRate != kExpectedModelSampleRate) {
+                if (error)
+                    *error = QStringLiteral("Supertonic model sample rate is %1 Hz; "
+                                            "expected %2 Hz")
+                                 .arg(config.sampleRate)
+                                 .arg(kExpectedModelSampleRate);
+                return failLoad(error);
+            }
             if (!loadIndexer(onnxDir, &indexer, error))
                 return failLoad(error);
             if (!loadStyle(voicePath, &style, error))

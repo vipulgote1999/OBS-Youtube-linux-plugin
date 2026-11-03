@@ -79,6 +79,7 @@ flatpak run --command=sh com.obsproject.Studio -c '
     LICENSES/onnxruntime/ThirdPartyNotices.txt \
     LICENSES/piper/COPYING \
     LICENSES/piper/uni_algo-NOTICE.txt \
+    LICENSES/supertonic/LICENSE \
     LICENSES/supertonic-3/LICENSE \
     LICENSES/supertonic-3/SOURCE.md \
     LICENSES/go/genproto-LICENSE \

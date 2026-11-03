@@ -86,6 +86,7 @@ private slots:
     void propagatesApiFailure();
     void fillsDefaultErrorWhenApiIsSilent();
     void rejectsWrongSampleRate();
+    void rejectsWrongStreamingRate();
     void rejectsNullApi();
     void cancelIsForwarded();
     void forwardsInitializationFailure();
@@ -223,6 +224,28 @@ void TestSupertonicEngine::rejectsWrongSampleRate()
     QVERIFY2(error.contains(QStringLiteral("44100")), qPrintable(error));
     QVERIFY(pcm.empty());
     QCOMPARE(sampleRate, 0);
+}
+
+void TestSupertonicEngine::rejectsWrongStreamingRate()
+{
+    auto api = std::make_unique<FakeSupertonicApi>();
+    FakeSupertonicApi *fake = api.get();
+    fake->resultSampleRate = 48000;
+    SupertonicEngine engine(std::move(api));
+
+    int sinkCalls = 0;
+    const auto sink = [&](const float *, size_t, bool) {
+        ++sinkCalls;
+        return true;
+    };
+
+    int sampleRate = 123;
+    QString error;
+    QVERIFY(!engine.synthesizeStreaming(QStringLiteral("rate"), sink, &sampleRate, &error));
+    QCOMPARE(sinkCalls, 0);
+    QCOMPARE(sampleRate, 0);
+    QVERIFY2(error.contains(QStringLiteral("48000")), qPrintable(error));
+    QVERIFY2(error.contains(QStringLiteral("44100")), qPrintable(error));
 }
 
 void TestSupertonicEngine::rejectsNullApi()

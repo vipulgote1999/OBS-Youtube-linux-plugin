@@ -76,7 +76,16 @@ bool SupertonicEngine::synthesizeStreaming(const QString &text, const ChunkSink 
     if (!api_)
         return fail(error, QStringLiteral("supertonic backend is not available"));
 
+    int nativeRate = 0;
+    bool rateMismatch = false;
     const auto resamplingSink = [&](const float *samples, size_t count, bool isLast) {
+        /* The API writes its sample rate before the first chunk.  Reject a
+         * mismatched backend here, before any audio reaches the worker: the
+         * worker's own guard cannot fire while its stream rate is still 0. */
+        if (nativeRate != kModelSampleRate) {
+            rateMismatch = true;
+            return false;
+        }
         const std::vector<float> chunk(samples, samples + count);
         if (chunk.empty())
             return true;
@@ -87,8 +96,13 @@ bool SupertonicEngine::synthesizeStreaming(const QString &text, const ChunkSink 
         return sink(resampled.data(), resampled.size(), isLast);
     };
 
-    int nativeRate = 0;
     if (!api_->synthesizeStreaming(text, speed_, steps_, resamplingSink, &nativeRate, error)) {
+        if (rateMismatch) {
+            *sampleRate = 0;
+            return fail(error, QStringLiteral("supertonic returned %1 Hz; expected %2 Hz")
+                                   .arg(nativeRate)
+                                   .arg(kModelSampleRate));
+        }
         if (error && error->isEmpty())
             *error = QStringLiteral("supertonic synthesis failed");
         return false;

@@ -7,7 +7,9 @@ model repository:
 - Revision: `aafc6e32416a594460b32413efc49d7fe4ce6d46`
 - License: BigScience Open RAIL-M (see `LICENSE`)
 - Upstream inference code: <https://github.com/supertone-oss-archive/supertonic>
-  (MIT); the plugin ports that C++ path to Qt and ONNX Runtime.
+  (MIT). The plugin ports that archived C++ path to Qt and ONNX Runtime; the
+  upstream MIT license and copyright notice are reproduced verbatim in
+  [`LICENSES/supertonic/LICENSE`](../supertonic/LICENSE).
 
 The Flatpak manifest downloads every model file from that revision and pins
 each one by SHA-256.  The installed layout is:
